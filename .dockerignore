@@ -1,0 +1,13 @@
+.git
+.venv
+__pycache__
+*.pyc
+frontend/node_modules
+frontend/dist
+config/data
+config/secrets
+/config/app.yaml
+/deploy/.env
+baidu_param
+*.sqlite3*
+tests/.tmp

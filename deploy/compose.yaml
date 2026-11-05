@@ -1,0 +1,65 @@
+services:
+  nas-web:
+    build:
+      context: ${NAS_SOURCE_DIR:-..}
+      target: web
+    container_name: nas-web
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    ports:
+      - "${LAN_BIND_IP:-192.168.1.230}:8088:8080"
+    volumes:
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/app.yaml:/app/data/app.yaml:ro
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/data:/app/data/data:rw
+      - ${QUARK_SKILL_DIR:-/opt/quarkclouddrive}:/opt/quarkclouddrive:ro
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/secrets/quark-home:/app/data/secrets/quark-home:rw
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/secrets/quark-home:/app/.quarkclouddrive:rw
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/secrets/baidu:/app/data/secrets/baidu:rw
+      - /srv/nas/07_Downloads:/nas/Downloads:rw
+    environment:
+      TZ: Asia/Shanghai
+      APP_CONFIG: /app/data/app.yaml
+      DATABASE_URL: sqlite:////app/data/data/nas-web.sqlite3
+      HOME: /app/data/secrets/quark-home
+      CLIENT_INFO_PRODUCT_NAME: WorkBuddy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health/live')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  nas-worker:
+    build:
+      context: ${NAS_SOURCE_DIR:-..}
+      target: worker
+    container_name: nas-worker
+    restart: unless-stopped
+    user: "${PUID:-1000}:${PGID:-1000}"
+    volumes:
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/app.yaml:/app/data/app.yaml:ro
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/data:/app/data/data:rw
+      - /srv/nas/07_Downloads:/nas/Downloads:rw
+      - ${QUARK_SKILL_DIR:-/opt/quarkclouddrive}:/opt/quarkclouddrive:ro
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/secrets/quark-home:/app/data/secrets/quark-home:rw
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/secrets/quark-home:/app/.quarkclouddrive:rw
+      - ${NAS_CONFIG_DIR:-/opt/docker/config/nas-web}/secrets/baidu:/app/data/secrets/baidu:rw
+    environment:
+      TZ: Asia/Shanghai
+      APP_CONFIG: /app/data/app.yaml
+      DATABASE_URL: sqlite:////app/data/data/nas-web.sqlite3
+      HOME: /app/data/secrets/quark-home
+      CLIENT_INFO_PRODUCT_NAME: WorkBuddy
+    read_only: true
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,size=256m
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL

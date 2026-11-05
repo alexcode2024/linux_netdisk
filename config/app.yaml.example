@@ -1,0 +1,51 @@
+app:
+  name: Ubuntu NAS
+  timezone: Asia/Shanghai
+  listen_host: 0.0.0.0
+  listen_port: 8080
+  log_level: INFO
+
+security:
+  session_ttl_hours: 12
+  login_rate_limit:
+    attempts: 5
+    window_seconds: 300
+  allow_delete: false
+  allow_symlinks: false
+  cors_origins: []
+
+storage:
+  # 只允许列出的容器内路径。第一版只挂载 Downloads。
+  allowed_roots:
+    - id: downloads
+      name: Downloads
+      container_path: /nas/Downloads
+      read_only: false
+      allow_upload: true
+      allow_delete: false
+
+quark:
+  # 使用 quarkclouddrive_offical 项目安装的官方 Skill CLI。
+  # CLI 授权配置放在 home 指向的持久目录，不要把 Cookie/Token 写入此文件。
+  enabled: false
+  adapter: quarkclouddrive_offical
+  script_path: /opt/quarkclouddrive/scripts/quark-drive.cjs
+  home: /app/data/secrets/quark-home
+  max_concurrent_uploads: 1
+  conflict_policy: skip
+  retry:
+    max_attempts: 3
+    initial_delay_seconds: 5
+    max_delay_seconds: 120
+
+baidu:
+  enabled: false
+  app_name: NAS文件管理
+  credentials_file: /app/data/secrets/baidu/baidu_param
+  token_file: /app/data/secrets/baidu/token.json
+  redirect_uri: http://192.168.1.230:8088/api/v1/cloud/baidu/oauth/callback
+  chunk_size_bytes: 4194304
+
+tasks:
+  retention_days: 90
+  progress_update_interval_seconds: 1
