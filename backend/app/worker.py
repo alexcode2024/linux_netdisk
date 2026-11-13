@@ -70,7 +70,8 @@ def process_job(job_id: str) -> None:
                 job.uploaded_bytes = sum(current.uploaded_bytes for current in job.items)
                 db.commit()
 
-            result = adapter.upload_file(source, current_remote_id, progress)
+            upload_target = current_remote_path if job.cloud_provider == "baidu" else current_remote_id
+            result = adapter.upload_file(source, upload_target, progress)
             stat_after = source.stat()
             if stat_before.st_size != stat_after.st_size or stat_before.st_mtime_ns != stat_after.st_mtime_ns:
                 raise RuntimeError(f"上传期间源文件发生变化: {item.source_relative_path}")
