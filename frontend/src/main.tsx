@@ -159,36 +159,38 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
     </header>
     <div className="body-shell">
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
-        <div className="side-section-label">工作区</div>
-        <button className={`nav-item ${page === 'files' ? 'active' : ''}`} onClick={() => navigate('files')}><LayoutDashboard size={18} />文件管理</button>
-        <button className={`nav-item ${page === 'tasks' ? 'active' : ''}`} onClick={() => navigate('tasks')}><CloudUpload size={18} />备份任务</button>
-        <div className="sidebar-status-header"><div className="side-section-label">系统状态</div><button className="sidebar-status-refresh" aria-label="刷新状态" title="刷新状态" onClick={() => void refreshStatuses()}><RefreshCw size={14} /></button></div>
-        <div className="sidebar-status-list">
-          <div className="sidebar-status-item" title="当前使用单管理员账户，所有 API 需要会话认证。">
-            <span className="sidebar-status-dot good" />
-            <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>访问安全</strong><span className="sidebar-status-badge good">正常</span></div><small>HttpOnly 会话已启用</small></div>
-          </div>
-          {(['quark', 'baidu'] as const).map(provider => {
-            const status = statuses[provider]
-            const name = provider === 'quark' ? '夸克网盘' : '百度网盘'
-            const label = status === null ? '检查中' : status.authenticated ? '已授权' : '需处理'
-            const stateClass = status === null ? 'loading' : status.authenticated ? 'good' : 'warning'
-            return <div className="sidebar-status-item" key={provider} title={status?.message || `${name}状态检查中`}>
-              <span className={`sidebar-status-dot ${stateClass}`} />
-              <div className="sidebar-status-info">
-                <div className="sidebar-status-line"><strong>{name}</strong><span className={`sidebar-status-badge ${stateClass}`}>{label}</span></div>
-                <small>{status?.message || '正在检查授权状态…'}</small>
-                {provider === 'baidu' && status && !status.authenticated && <a className="sidebar-status-action" href="/api/v1/cloud/baidu/authorize">授权百度网盘</a>}
-              </div>
+        <div className="sidebar-scroll">
+          <div className="side-section-label">工作区</div>
+          <button className={`nav-item ${page === 'files' ? 'active' : ''}`} onClick={() => navigate('files')}><LayoutDashboard size={18} />文件管理</button>
+          <button className={`nav-item ${page === 'tasks' ? 'active' : ''}`} onClick={() => navigate('tasks')}><CloudUpload size={18} />备份任务</button>
+          <div className="sidebar-status-header"><div className="side-section-label">系统状态</div><button className="sidebar-status-refresh" aria-label="刷新状态" title="刷新状态" onClick={() => void refreshStatuses()}><RefreshCw size={14} /></button></div>
+          <div className="sidebar-status-list">
+            <div className="sidebar-status-item" title="当前使用单管理员账户，所有 API 需要会话认证。">
+              <span className="sidebar-status-dot good" />
+              <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>访问安全</strong><span className="sidebar-status-badge good">正常</span></div><small>HttpOnly 会话已启用</small></div>
             </div>
-          })}
-          <div className="sidebar-status-item" title="符号链接默认拒绝，删除能力默认关闭，上传使用原子替换。">
-            <span className="sidebar-status-dot good" />
-            <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>文件保护</strong><span className="sidebar-status-badge good">正常</span></div><small>符号链接拒绝 · 删除默认关闭</small></div>
+            {(['quark', 'baidu'] as const).map(provider => {
+              const status = statuses[provider]
+              const name = provider === 'quark' ? '夸克网盘' : '百度网盘'
+              const label = status === null ? '检查中' : status.authenticated ? '已授权' : '需处理'
+              const stateClass = status === null ? 'loading' : status.authenticated ? 'good' : 'warning'
+              return <div className="sidebar-status-item" key={provider} title={status?.message || `${name}状态检查中`}>
+                <span className={`sidebar-status-dot ${stateClass}`} />
+                <div className="sidebar-status-info">
+                  <div className="sidebar-status-line"><strong>{name}</strong><span className={`sidebar-status-badge ${stateClass}`}>{label}</span></div>
+                  <small>{status?.message || '正在检查授权状态…'}</small>
+                  {provider === 'baidu' && status && !status.authenticated && <a className="sidebar-status-action" href="/api/v1/cloud/baidu/authorize">授权百度网盘</a>}
+                </div>
+              </div>
+            })}
+            <div className="sidebar-status-item" title="符号链接默认拒绝，删除能力默认关闭，上传使用原子替换。">
+              <span className="sidebar-status-dot good" />
+              <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>文件保护</strong><span className="sidebar-status-badge good">正常</span></div><small>符号链接拒绝 · 删除默认关闭</small></div>
+            </div>
           </div>
+          <div className="side-section-label roots-label">授权目录</div>
+          {roots.map(root => <button key={root.id} className={`root-item ${page === 'files' && activeRoot === root.id ? 'selected' : ''}`} onClick={() => { setActiveRoot(root.id); setActivePath(''); navigate('files') }}><Folder size={17} /><span>{root.name}</span></button>)}
         </div>
-        <div className="side-section-label roots-label">授权目录</div>
-        {roots.map(root => <button key={root.id} className={`root-item ${page === 'files' && activeRoot === root.id ? 'selected' : ''}`} onClick={() => { setActiveRoot(root.id); setActivePath(''); navigate('files') }}><Folder size={17} /><span>{root.name}</span></button>)}
         <div className="sidebar-bottom">
           <div className="sidebar-control-row">
             <button className={`nav-item sidebar-settings ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')} title="系统设置" aria-label="系统设置"><Settings size={18} /></button>
