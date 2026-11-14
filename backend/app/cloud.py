@@ -21,6 +21,10 @@ from typing import Callable, Protocol
 from .config import BaiduConfig, QuarkConfig
 
 
+_NETWORK_RETRY_DELAYS = (1, 2)
+_RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+
+
 class CloudAdapterError(RuntimeError):
     pass
 
@@ -259,12 +263,24 @@ class BaiduPanAdapter:
         return f"{self.oauth_authorize_url}?{query}"
 
     @staticmethod
-    def _json_request(url: str, data: bytes | None = None, timeout: int = 30) -> dict:
+    def _json_request(url: str, data: bytes | None = None, timeout: int = 30, retry_safe: bool = False) -> dict:
         request = urllib.request.Request(url, data=data, headers={"User-Agent": "NAS-Backup/1.0"})
+        for attempt in range(len(_NETWORK_RETRY_DELAYS) + 1):
+            try:
+                with urllib.request.urlopen(request, timeout=timeout) as response:
+                    response_body = response.read()
+                break
+            except urllib.error.HTTPError as exc:
+                if not retry_safe or exc.code not in _RETRYABLE_HTTP_STATUS_CODES or attempt == len(_NETWORK_RETRY_DELAYS):
+                    raise CloudAdapterError("百度网盘服务暂时不可用") from exc
+            except (urllib.error.URLError, TimeoutError) as exc:
+                if not retry_safe or attempt == len(_NETWORK_RETRY_DELAYS):
+                    raise CloudAdapterError("百度网盘服务暂时不可用") from exc
+            if attempt < len(_NETWORK_RETRY_DELAYS):
+                time.sleep(_NETWORK_RETRY_DELAYS[attempt])
         try:
-            with urllib.request.urlopen(request, timeout=timeout) as response:
-                payload = json.loads(response.read().decode("utf-8"))
-        except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+            payload = json.loads(response_body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
             raise CloudAdapterError("百度网盘服务暂时不可用") from exc
         if not isinstance(payload, dict):
             raise CloudAdapterError("百度网盘返回了无效响应")
@@ -337,13 +353,13 @@ class BaiduPanAdapter:
         token = self._access_token()
         query = urllib.parse.urlencode({**params, "access_token": token})
         body = urllib.parse.urlencode(post).encode() if post is not None else None
-        return self._json_request(f"{self.api_url}?{query}", body)
+        return self._json_request(f"{self.api_url}?{query}", body, retry_safe=post is None)
 
     def check_auth(self) -> AuthStatus:
         try:
             token = self._access_token()
             query = urllib.parse.urlencode({"method": "uinfo", "access_token": token})
-            result = self._json_request(f"{self.user_info_url}?{query}")
+            result = self._json_request(f"{self.user_info_url}?{query}", retry_safe=True)
             return AuthStatus(bool(result.get("uk") or result.get("baidu_name")), "百度网盘授权有效")
         except CloudAdapterError as exc:
             return AuthStatus(False, str(exc))
@@ -400,7 +416,7 @@ class BaiduPanAdapter:
             "path": remote_path,
             "uploadid": upload_id,
         })
-        upload_location = self._json_request(f"{self.locate_upload_url}?{upload_query}")
+        upload_location = self._json_request(f"{self.locate_upload_url}?{upload_query}", retry_safe=True)
         upload_host = str(upload_location.get("host") or "")
         if not upload_host:
             servers = upload_location.get("servers") or []
@@ -425,10 +441,23 @@ class BaiduPanAdapter:
                 body = prefix + chunk + f"\r\n--{boundary}--\r\n".encode()
                 query = urllib.parse.urlencode({"method": "upload", "type": "tmpfile", "path": remote_path, "uploadid": upload_id, "partseq": str(part_index), "access_token": self._access_token()})
                 request = urllib.request.Request(f"{upload_host.rstrip('/')}/rest/2.0/pcs/superfile2?{query}", data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": "NAS-Backup/1.0"})
+                for attempt in range(len(_NETWORK_RETRY_DELAYS) + 1):
+                    try:
+                        with urllib.request.urlopen(request, timeout=300) as response:
+                            response_body = response.read()
+                    except urllib.error.HTTPError as exc:
+                        if exc.code not in _RETRYABLE_HTTP_STATUS_CODES or attempt == len(_NETWORK_RETRY_DELAYS):
+                            raise CloudAdapterError("百度网盘分片上传失败") from exc
+                    except (urllib.error.URLError, TimeoutError) as exc:
+                        if attempt == len(_NETWORK_RETRY_DELAYS):
+                            raise CloudAdapterError("百度网盘分片上传失败") from exc
+                    else:
+                        break
+                    if attempt < len(_NETWORK_RETRY_DELAYS):
+                        time.sleep(_NETWORK_RETRY_DELAYS[attempt])
                 try:
-                    with urllib.request.urlopen(request, timeout=300) as response:
-                        part_result = json.loads(response.read().decode("utf-8"))
-                except (urllib.error.URLError, TimeoutError, UnicodeDecodeError, json.JSONDecodeError) as exc:
+                    part_result = json.loads(response_body.decode("utf-8"))
+                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
                     raise CloudAdapterError("百度网盘分片上传失败") from exc
                 if part_result.get("errno", 0) != 0:
                     raise CloudAdapterError(f"百度网盘分片上传错误 ({part_result.get('errno')})")
