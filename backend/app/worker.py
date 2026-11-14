@@ -112,7 +112,7 @@ def process_job(job_id: str) -> None:
 
 
 def run() -> None:
-    init_db()
+    init_db(recover_interrupted=True)
     logger.info("nas-worker started")
     while True:
         db = SessionLocal()

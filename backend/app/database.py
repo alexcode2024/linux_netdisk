@@ -122,7 +122,7 @@ if database_url().startswith("sqlite"):
 SessionLocal = sessionmaker(bind=engine, autoflush=False, expire_on_commit=False)
 
 
-def init_db() -> None:
+def init_db(*, recover_interrupted: bool = False) -> None:
     if database_url().startswith("sqlite"):
         db_path = database_url().removeprefix("sqlite:///")
         Path(db_path).parent.mkdir(parents=True, exist_ok=True)
@@ -152,7 +152,8 @@ def init_db() -> None:
             WHERE source_name = ''
               AND EXISTS (SELECT 1 FROM backup_job_items WHERE backup_job_items.job_id = backup_jobs.id)
         """))
-        connection.execute(text("UPDATE backup_jobs SET status='pending', error_summary='服务重启后等待恢复' WHERE status IN ('preparing','running','retrying')"))
+        if recover_interrupted:
+            connection.execute(text("UPDATE backup_jobs SET status='pending', error_summary='服务重启后等待恢复' WHERE status IN ('preparing','running','retrying')"))
 
 
 def get_db() -> Generator:
