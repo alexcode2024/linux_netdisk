@@ -68,12 +68,14 @@ input:focus { border-color: #6481e6; box-shadow: 0 0 0 3px #6481e61a; }
 .nav-item.active { color: #3155d9; background: #edf1ff; font-weight: 600; }
 .root-item { color: #58667e; }
 .root-item.selected { color: #3155d9; background: #f4f6ff; font-weight: 600; }
-.sidebar-settings { margin-top: auto; }
-.sidebar-account { display: grid; gap: 10px; margin-top: 12px; padding: 12px; border-top: 1px solid #edf0f5; }
+.sidebar-bottom { display: grid; gap: 10px; margin-top: auto; padding-top: 12px; border-top: 1px solid #edf0f5; }
+.sidebar-control-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.sidebar-settings { width: 36px; height: 36px; padding: 0; justify-content: center; }
+.sidebar-account { display: flex; align-items: center; gap: 10px; min-width: 0; }
 .sidebar-account-user, .sidebar-account-actions { display: flex; align-items: center; min-width: 0; }
-.sidebar-account-user { gap: 9px; }
+.sidebar-account-user { flex: 1; gap: 9px; }
 .sidebar-account-user .user-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.sidebar-account-actions { justify-content: flex-end; gap: 14px; }
+.sidebar-account-actions { flex: 0 0 auto; }
 .sidebar-footer { display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 12px; color: #88a694; font-size: 11px; }
 .main-content { flex: 1; min-width: 0; }
 .page-content { max-width: 1320px; margin: 0 auto; padding: 38px 42px 60px; }
@@ -268,7 +270,7 @@ input:focus { border-color: #6481e6; box-shadow: 0 0 0 3px #6481e61a; }
 :root[data-theme='dark'] input::placeholder { color: #7f8b9b; }
 :root[data-theme='dark'] input:focus { border-color: #8198ef; box-shadow: 0 0 0 3px #8198ef2b; }
 :root[data-theme='dark'] .sidebar-footer { color: #82c79b; }
-:root[data-theme='dark'] .sidebar-account { border-color: #2b3644; }
+:root[data-theme='dark'] .sidebar-bottom { border-color: #2b3644; }
 :root[data-theme='dark'] .sidebar-status-item:hover { background: #202b39; }
 :root[data-theme='dark'] .sidebar-status-line strong { color: #d5dde8; }
 :root[data-theme='dark'] .sidebar-status-info small { color: #8d9aad; }

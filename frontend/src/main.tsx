@@ -189,10 +189,15 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
         </div>
         <div className="side-section-label roots-label">授权目录</div>
         {roots.map(root => <button key={root.id} className={`root-item ${page === 'files' && activeRoot === root.id ? 'selected' : ''}`} onClick={() => { setActiveRoot(root.id); setActivePath(''); navigate('files') }}><Folder size={17} /><span>{root.name}</span></button>)}
-        <button className={`nav-item sidebar-settings ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} />系统设置</button>
-        <div className="sidebar-account">
+        <div className="sidebar-bottom">
+          <div className="sidebar-control-row">
+            <button className={`nav-item sidebar-settings ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')} title="系统设置" aria-label="系统设置"><Settings size={18} /></button>
+            <ThemeButton theme={theme} onToggle={onToggleTheme} />
+          </div>
+          <div className="sidebar-account">
           <div className="sidebar-account-user"><span className="avatar">{username.slice(0, 1).toUpperCase()}</span><span className="user-name" title={username}>{username}</span></div>
-          <div className="sidebar-account-actions"><ThemeButton theme={theme} onToggle={onToggleTheme} /><button className="text-button" onClick={logout}><LogOut size={16} />退出</button></div>
+            <div className="sidebar-account-actions"><button className="text-button" onClick={logout}><LogOut size={16} />退出</button></div>
+          </div>
         </div>
         <div className="sidebar-footer"><ShieldCheck size={16} /><span>安全模式已开启</span></div>
       </aside>
