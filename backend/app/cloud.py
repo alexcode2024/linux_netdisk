@@ -21,7 +21,7 @@ from typing import Callable, Protocol
 from .config import BaiduConfig, QuarkConfig
 
 
-_NETWORK_RETRY_DELAYS = (1, 2)
+_NETWORK_RETRY_DELAYS = (60,) * 10
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
 
 

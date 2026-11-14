@@ -67,7 +67,7 @@ class BaiduPanAdapterTests(unittest.TestCase):
 
         self.assertEqual(payload, {"errno": 0})
         self.assertEqual(urlopen.call_count, 2)
-        sleep.assert_called_once_with(1)
+        sleep.assert_called_once_with(60)
 
     def test_json_post_does_not_retry_ambiguous_timeouts(self) -> None:
         with patch("backend.app.cloud.urllib.request.urlopen", side_effect=urllib.error.URLError("timed out")) as urlopen, \
@@ -106,7 +106,7 @@ class BaiduPanAdapterTests(unittest.TestCase):
         self.assertEqual(result.remote_id, "uploaded-id")
         self.assertEqual(progress, [len(b"upload contents")])
         self.assertEqual(urlopen.call_count, 3)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 60])
 
     def test_upload_fails_after_transient_part_timeouts_are_exhausted(self) -> None:
         source = self.root / "upload.txt"
@@ -121,8 +121,8 @@ class BaiduPanAdapterTests(unittest.TestCase):
             with self.assertRaisesRegex(CloudAdapterError, "分片上传失败"):
                 self.adapter.upload_file(source, "/apps/NAS文件管理", lambda _: None)
 
-        self.assertEqual(urlopen.call_count, 3)
-        self.assertEqual([call.args[0] for call in sleep.call_args_list], [1, 2])
+        self.assertEqual(urlopen.call_count, 11)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60] * 10)
 
 
 if __name__ == "__main__":
