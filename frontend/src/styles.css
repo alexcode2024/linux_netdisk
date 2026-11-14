@@ -68,7 +68,8 @@ input:focus { border-color: #6481e6; box-shadow: 0 0 0 3px #6481e61a; }
 .nav-item.active { color: #3155d9; background: #edf1ff; font-weight: 600; }
 .root-item { color: #58667e; }
 .root-item.selected { color: #3155d9; background: #f4f6ff; font-weight: 600; }
-.sidebar-footer { display: flex; align-items: center; gap: 7px; margin-top: auto; padding: 12px; color: #88a694; font-size: 11px; }
+.sidebar-settings { margin-top: auto; }
+.sidebar-footer { display: flex; align-items: center; gap: 7px; margin-top: 8px; padding: 12px; color: #88a694; font-size: 11px; }
 .main-content { flex: 1; min-width: 0; }
 .page-content { max-width: 1320px; margin: 0 auto; padding: 38px 42px 60px; }
 .page-heading { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 28px; }

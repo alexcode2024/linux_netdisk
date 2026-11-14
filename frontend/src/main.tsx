@@ -163,7 +163,6 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
         <div className="side-section-label">工作区</div>
         <button className={`nav-item ${page === 'files' ? 'active' : ''}`} onClick={() => navigate('files')}><LayoutDashboard size={18} />文件管理</button>
         <button className={`nav-item ${page === 'tasks' ? 'active' : ''}`} onClick={() => navigate('tasks')}><CloudUpload size={18} />备份任务</button>
-        <button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} />系统设置</button>
         <div className="sidebar-status-header"><div className="side-section-label">系统状态</div><button className="sidebar-status-refresh" aria-label="刷新状态" title="刷新状态" onClick={() => void refreshStatuses()}><RefreshCw size={14} /></button></div>
         <div className="sidebar-status-list">
           <div className="sidebar-status-item" title="当前使用单管理员账户，所有 API 需要会话认证。">
@@ -191,6 +190,7 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
         </div>
         <div className="side-section-label roots-label">授权目录</div>
         {roots.map(root => <button key={root.id} className={`root-item ${page === 'files' && activeRoot === root.id ? 'selected' : ''}`} onClick={() => { setActiveRoot(root.id); setActivePath(''); navigate('files') }}><Folder size={17} /><span>{root.name}</span></button>)}
+        <button className={`nav-item sidebar-settings ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} />系统设置</button>
         <div className="sidebar-footer"><ShieldCheck size={16} /><span>安全模式已开启</span></div>
       </aside>
       <main className="main-content">
