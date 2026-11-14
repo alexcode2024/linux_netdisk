@@ -567,6 +567,19 @@ def cancel_backup(job_id: str, user: User = Depends(current_user), db: DbSession
     return job_response(job, include_items=True)
 
 
+@app.delete("/api/v1/backups/{job_id}")
+def delete_backup(job_id: str, user: User = Depends(current_user), db: DbSession = Depends(get_db)) -> dict[str, bool]:
+    job = db.get(BackupJob, job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="任务不存在")
+    if job.status != "failed":
+        raise HTTPException(status_code=409, detail="仅允许删除失败任务")
+    audit(db, user, "backup_delete", None, job.source_name, "success")
+    db.delete(job)
+    db.commit()
+    return {"deleted": True}
+
+
 @app.get("/api/v1/backups/{job_id}/events")
 async def backup_events(job_id: str, request: Request, user: User = Depends(current_user)) -> StreamingResponse:
     async def event_stream():
