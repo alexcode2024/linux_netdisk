@@ -132,7 +132,7 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
   const logout = async () => { await api('/api/v1/auth/logout', { method: 'POST' }).catch(() => undefined); onLogout() }
   return <div className="app-shell">
     <header className="topbar">
-      <div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(value => !value)}><Menu size={20} /></button><div className="brand-inline"><div className="brand-mark small"><HardDrive size={18} /></div><span>Ubuntu NAS</span></div><span className="topbar-tag">文件管理</span></div>
+      <div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(value => !value)}><Menu size={20} /></button><div className="brand-inline"><div className="brand-mark small"><HardDrive size={18} /></div><span>Ubuntu文件网盘备份</span></div><span className="topbar-tag">文件管理</span></div>
       <div className="user-menu"><span className="avatar">{username.slice(0, 1).toUpperCase()}</span><span className="user-name">{username}</span><ThemeButton theme={theme} onToggle={onToggleTheme} /><button className="text-button" onClick={logout}><LogOut size={16} />退出</button></div>
     </header>
     <div className="body-shell">
