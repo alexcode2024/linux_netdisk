@@ -187,6 +187,10 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
               <span className="sidebar-status-dot good" />
               <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>文件保护</strong><span className="sidebar-status-badge good">正常</span></div><small>符号链接拒绝 · 删除默认关闭</small></div>
             </div>
+            <div className="sidebar-status-item" title="当前启用会话认证、目录限制、路径校验和上传保护。">
+              <span className="sidebar-status-dot good" />
+              <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>安全策略</strong><span className="sidebar-status-badge good">已启用</span></div><small>访问认证 · 目录限制 · 上传保护</small></div>
+            </div>
           </div>
           <div className="side-section-label roots-label">授权目录</div>
           {roots.map(root => <button key={root.id} className={`root-item ${page === 'files' && activeRoot === root.id ? 'selected' : ''}`} onClick={() => { setActiveRoot(root.id); setActivePath(''); navigate('files') }}><Folder size={17} /><span>{root.name}</span></button>)}
@@ -201,7 +205,6 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
             <div className="sidebar-account-actions"><button className="text-button" onClick={logout}><LogOut size={16} />退出</button></div>
           </div>
         </div>
-        <div className="sidebar-footer"><ShieldCheck size={16} /><span>安全模式已开启</span></div>
       </aside>
       <main className="main-content">
         {page === 'files' && <FileManager root={roots.find(root => root.id === activeRoot)} rootId={activeRoot} path={activePath} onPathChange={setActivePath} refreshToken={refreshToken} onRefresh={() => setRefreshToken(value => value + 1)} />}
