@@ -156,7 +156,6 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
   return <div className="app-shell">
     <header className="topbar">
       <div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(value => !value)}><Menu size={20} /></button><div className="brand-inline"><div className="brand-mark small"><HardDrive size={18} /></div><span>Ubuntu文件网盘备份</span></div><span className="topbar-tag">文件管理</span></div>
-      <div className="user-menu"><span className="avatar">{username.slice(0, 1).toUpperCase()}</span><span className="user-name">{username}</span><ThemeButton theme={theme} onToggle={onToggleTheme} /><button className="text-button" onClick={logout}><LogOut size={16} />退出</button></div>
     </header>
     <div className="body-shell">
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
@@ -191,6 +190,10 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
         <div className="side-section-label roots-label">授权目录</div>
         {roots.map(root => <button key={root.id} className={`root-item ${page === 'files' && activeRoot === root.id ? 'selected' : ''}`} onClick={() => { setActiveRoot(root.id); setActivePath(''); navigate('files') }}><Folder size={17} /><span>{root.name}</span></button>)}
         <button className={`nav-item sidebar-settings ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} />系统设置</button>
+        <div className="sidebar-account">
+          <div className="sidebar-account-user"><span className="avatar">{username.slice(0, 1).toUpperCase()}</span><span className="user-name" title={username}>{username}</span></div>
+          <div className="sidebar-account-actions"><ThemeButton theme={theme} onToggle={onToggleTheme} /><button className="text-button" onClick={logout}><LogOut size={16} />退出</button></div>
+        </div>
         <div className="sidebar-footer"><ShieldCheck size={16} /><span>安全模式已开启</span></div>
       </aside>
       <main className="main-content">
