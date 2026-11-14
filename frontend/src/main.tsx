@@ -33,6 +33,8 @@ type Root = { id: string; name: string; read_only: boolean; allow_upload: boolea
 type FileEntry = { name: string; relative_path: string; type: 'file' | 'directory' | 'symlink' | 'other'; size: number | null; modified_at: string; extension?: string | null }
 type FileList = { root_id: string; path: string; items: FileEntry[]; page: number; page_size: number; total: number; sort: string; order: string }
 type CloudProvider = 'quark' | 'baidu'
+type CloudAuthStatus = { authenticated: boolean; message: string }
+type CloudStatuses = Record<CloudProvider, CloudAuthStatus | null>
 type Job = { id: string; status: string; cloud_provider: CloudProvider; source_name: string; remote_directory_id: string; remote_directory_path: string; conflict_policy: string; total_files: number; completed_files: number; failed_files: number; total_bytes: number; uploaded_bytes: number; current_file: string | null; speed_bytes_per_second: number; error_summary: string | null; created_at: string; started_at: string | null; finished_at: string | null; items?: JobItem[] }
 type JobItem = { id: number; source_relative_path: string; source_type: string; file_size: number; uploaded_bytes: number; status: string; error_message: string | null; retry_count: number }
 type RemoteEntry = { id: string; name: string; path: string; type: string }
@@ -44,6 +46,26 @@ const api = async <T,>(path: string, init?: RequestInit): Promise<T> => {
     throw new Error(error.detail || '请求失败')
   }
   return response.json()
+}
+
+function useCloudStatuses() {
+  const [statuses, setStatuses] = useState<CloudStatuses>({ quark: null, baidu: null })
+  const refreshStatuses = async () => {
+    await Promise.all((['quark', 'baidu'] as const).map(async provider => {
+      try {
+        const status = await api<CloudAuthStatus>(`/api/v1/cloud/${provider}/status`)
+        setStatuses(previous => ({ ...previous, [provider]: status }))
+      } catch {
+        setStatuses(previous => ({ ...previous, [provider]: { authenticated: false, message: '无法连接状态接口' } }))
+      }
+    }))
+  }
+  useEffect(() => {
+    void refreshStatuses()
+    const interval = window.setInterval(() => { void refreshStatuses() }, 60_000)
+    return () => window.clearInterval(interval)
+  }, [])
+  return { statuses, refreshStatuses }
 }
 
 const formatBytes = (value: number | null | undefined) => {
@@ -123,6 +145,7 @@ function App() {
 function Workspace({ username, theme, onToggleTheme, onLogout }: { username: string; theme: Theme; onToggleTheme: () => void; onLogout: () => void }) {
   const [page, setPage] = useState<'files' | 'tasks' | 'settings'>('files')
   const [sidebarOpen, setSidebarOpen] = useState(false)
+  const { statuses, refreshStatuses } = useCloudStatuses()
   const [roots, setRoots] = useState<Root[]>([])
   const [activeRoot, setActiveRoot] = useState('')
   const [activePath, setActivePath] = useState('')
@@ -141,6 +164,31 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
         <button className={`nav-item ${page === 'files' ? 'active' : ''}`} onClick={() => navigate('files')}><LayoutDashboard size={18} />文件管理</button>
         <button className={`nav-item ${page === 'tasks' ? 'active' : ''}`} onClick={() => navigate('tasks')}><CloudUpload size={18} />备份任务</button>
         <button className={`nav-item ${page === 'settings' ? 'active' : ''}`} onClick={() => navigate('settings')}><Settings size={18} />系统设置</button>
+        <div className="sidebar-status-header"><div className="side-section-label">系统状态</div><button className="sidebar-status-refresh" aria-label="刷新状态" title="刷新状态" onClick={() => void refreshStatuses()}><RefreshCw size={14} /></button></div>
+        <div className="sidebar-status-list">
+          <div className="sidebar-status-item" title="当前使用单管理员账户，所有 API 需要会话认证。">
+            <span className="sidebar-status-dot good" />
+            <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>访问安全</strong><span className="sidebar-status-badge good">正常</span></div><small>HttpOnly 会话已启用</small></div>
+          </div>
+          {(['quark', 'baidu'] as const).map(provider => {
+            const status = statuses[provider]
+            const name = provider === 'quark' ? '夸克网盘' : '百度网盘'
+            const label = status === null ? '检查中' : status.authenticated ? '已授权' : '需处理'
+            const stateClass = status === null ? 'loading' : status.authenticated ? 'good' : 'warning'
+            return <div className="sidebar-status-item" key={provider} title={status?.message || `${name}状态检查中`}>
+              <span className={`sidebar-status-dot ${stateClass}`} />
+              <div className="sidebar-status-info">
+                <div className="sidebar-status-line"><strong>{name}</strong><span className={`sidebar-status-badge ${stateClass}`}>{label}</span></div>
+                <small>{status?.message || '正在检查授权状态…'}</small>
+                {provider === 'baidu' && status && !status.authenticated && <a className="sidebar-status-action" href="/api/v1/cloud/baidu/authorize">授权百度网盘</a>}
+              </div>
+            </div>
+          })}
+          <div className="sidebar-status-item" title="符号链接默认拒绝，删除能力默认关闭，上传使用原子替换。">
+            <span className="sidebar-status-dot good" />
+            <div className="sidebar-status-info"><div className="sidebar-status-line"><strong>文件保护</strong><span className="sidebar-status-badge good">正常</span></div><small>符号链接拒绝 · 删除默认关闭</small></div>
+          </div>
+        </div>
         <div className="side-section-label roots-label">授权目录</div>
         {roots.map(root => <button key={root.id} className={`root-item ${page === 'files' && activeRoot === root.id ? 'selected' : ''}`} onClick={() => { setActiveRoot(root.id); setActivePath(''); navigate('files') }}><Folder size={17} /><span>{root.name}</span></button>)}
         <div className="sidebar-footer"><ShieldCheck size={16} /><span>安全模式已开启</span></div>
@@ -148,7 +196,7 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
       <main className="main-content">
         {page === 'files' && <FileManager root={roots.find(root => root.id === activeRoot)} rootId={activeRoot} path={activePath} onPathChange={setActivePath} refreshToken={refreshToken} onRefresh={() => setRefreshToken(value => value + 1)} />}
         {page === 'tasks' && <TaskCenter />}
-        {page === 'settings' && <SettingsPage />}
+        {page === 'settings' && <SettingsPage statuses={statuses} onRefresh={refreshStatuses} />}
       </main>
     </div>
   </div>
@@ -282,16 +330,10 @@ function JobDetail({ job, busy, onClose, onRetry, onCancel }: { job: Job; busy: 
   return <Modal title={`任务 ${job.id.slice(0, 8)}`} wide onClose={onClose}><div className="job-overview"><div><span>状态</span><strong className={`status-text ${job.status}`}>{statusText[job.status] || job.status}</strong></div><div><span>网盘 / 目标目录</span><strong>{job.cloud_provider === 'baidu' ? '百度网盘' : '夸克网盘'} · {job.remote_directory_path}</strong></div><div><span>总大小</span><strong>{formatBytes(job.total_bytes)}</strong></div><div><span>错误项目</span><strong>{job.failed_files}</strong></div></div>{job.current_file && <div className="notice"><span>当前文件：{job.current_file}</span></div>}{job.error_summary && <div className="form-error">{job.error_summary}</div>}<div className="detail-items">{job.items?.map(item => <div key={item.id}><span className={`mini-status ${item.status}`} /> <span>{item.source_relative_path}</span><small>{item.status === 'completed' ? '完成' : item.error_message || statusText[item.status] || item.status}</small></div>)}</div><div className="modal-actions"><button className="secondary" onClick={onClose}>关闭</button>{['pending', 'preparing', 'running', 'retrying'].includes(job.status) && <button className="secondary danger-button" disabled={busy} onClick={onCancel}>取消任务</button>}{job.status === 'failed' && <button className="primary" disabled={busy} onClick={onRetry}>重试失败项</button>}</div></Modal>
 }
 
-function SettingsPage() {
-  const [statuses, setStatuses] = useState<Record<CloudProvider, { authenticated: boolean; message: string } | null>>({ quark: null, baidu: null })
-  const refresh = () => Promise.all((['quark', 'baidu'] as const).map(async provider => {
-    try { const status = await api<{ authenticated: boolean; message: string }>(`/api/v1/cloud/${provider}/status`); setStatuses(previous => ({ ...previous, [provider]: status })) }
-    catch { setStatuses(previous => ({ ...previous, [provider]: { authenticated: false, message: '无法连接状态接口' } })) }
-  }))
-  useEffect(() => { void refresh() }, [])
+function SettingsPage({ statuses, onRefresh }: { statuses: CloudStatuses; onRefresh: () => Promise<void> }) {
   const authResult = new URLSearchParams(window.location.search).get('baidu_auth')
-  useEffect(() => { if (!authResult) return; window.history.replaceState({}, '', window.location.pathname); void refresh() }, [authResult])
-  return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">SYSTEM / SECURITY</p><h1>系统设置</h1><p className="muted">查看运行状态和外部存储连接，不在网页中展示凭据。</p></div><button className="secondary" onClick={() => void refresh()}><RefreshCw size={16} />刷新状态</button></div>{authResult && <div className={authResult === 'success' ? 'notice' : 'form-error'}>{authResult === 'success' ? '百度网盘授权完成' : '百度网盘授权未完成，请重试'}</div>}<div className="settings-grid"><section className="settings-card"><div className="settings-icon blue"><ShieldCheck size={20} /></div><div><h3>访问安全</h3><p>当前使用单管理员账户，所有 API 需要会话认证。</p><span className="settings-status good">● HttpOnly 会话已启用</span></div></section><section className="settings-card"><div className="settings-icon purple"><CloudUpload size={20} /></div><div><h3>夸克网盘</h3><p>{statuses.quark?.message || '正在检查授权状态…'}</p><span className={`settings-status ${statuses.quark?.authenticated ? 'good' : 'warning'}`}>● {statuses.quark?.authenticated ? '授权有效' : '未授权或未配置'}</span></div></section><section className="settings-card"><div className="settings-icon blue"><CloudUpload size={20} /></div><div><h3>百度网盘</h3><p>{statuses.baidu?.message || '正在检查授权状态…'}</p><span className={`settings-status ${statuses.baidu?.authenticated ? 'good' : 'warning'}`}>● {statuses.baidu?.authenticated ? '授权有效' : '未授权或未配置'}</span>{!statuses.baidu?.authenticated && <a className="secondary baidu-auth-link" href="/api/v1/cloud/baidu/authorize">授权百度网盘</a>}</div></section><section className="settings-card"><div className="settings-icon orange"><FolderOpen size={20} /></div><div><h3>文件保护</h3><p>符号链接默认拒绝，删除能力默认关闭，上传使用原子替换。</p><span className="settings-status good">● 安全策略正常</span></div></section></div><div className="info-panel"><div><h3>服务器运维</h3><p>云盘应用密钥和授权凭据只保存在服务器端受限目录，不要将 SecretKey、SignKey 或 Token 分享到聊天或网页。</p></div><button className="secondary" onClick={() => window.open('/api/docs', '_blank')}>打开 API 文档 <ArrowRight size={16} /></button></div></div>
+  useEffect(() => { if (authResult) window.history.replaceState({}, '', window.location.pathname) }, [authResult])
+  return <div className="page-content"><div className="page-heading"><div><p className="eyebrow">SYSTEM / SECURITY</p><h1>系统设置</h1><p className="muted">云盘连接与安全状态常驻显示在左侧导航栏。</p></div><button className="secondary" onClick={() => void onRefresh()}><RefreshCw size={16} />刷新状态</button></div>{authResult && <div className={authResult === 'success' ? 'notice' : 'form-error'}>{authResult === 'success' ? '百度网盘授权完成' : '百度网盘授权未完成，请重试'}</div>}<div className="info-panel"><div><h3>服务器运维</h3><p>云盘应用密钥和授权凭据只保存在服务器端受限目录，不要将 SecretKey、SignKey 或 Token 分享到聊天或网页。</p></div><button className="secondary" onClick={() => window.open('/api/docs', '_blank')}>打开 API 文档 <ArrowRight size={16} /></button></div></div>
 }
 
 function Stat({ label, value, accent = '' }: { label: string; value: number; accent?: string }) { return <div className="stat-card"><span className={`stat-dot ${accent}`} /><div><span>{label}</span><strong>{value}</strong></div></div> }
