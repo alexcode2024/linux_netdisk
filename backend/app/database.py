@@ -153,7 +153,7 @@ def init_db(*, recover_interrupted: bool = False) -> None:
               AND EXISTS (SELECT 1 FROM backup_job_items WHERE backup_job_items.job_id = backup_jobs.id)
         """))
         if recover_interrupted:
-            connection.execute(text("UPDATE backup_jobs SET status='pending', error_summary='服务重启后等待恢复' WHERE status IN ('preparing','running','retrying')"))
+            connection.execute(text("UPDATE backup_jobs SET status='pending', current_file=NULL, speed_bytes_per_second=0, error_summary='服务重启后等待恢复' WHERE status IN ('preparing','running','retrying')"))
 
 
 def get_db() -> Generator:

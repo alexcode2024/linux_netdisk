@@ -24,6 +24,8 @@ def process_job(job_id: str) -> None:
         if job is None or job.status == "cancelled":
             return
         job.status = "preparing"
+        job.current_file = None
+        job.speed_bytes_per_second = 0
         job.started_at = job.started_at or utcnow()
         db.commit()
         adapter = get_cloud_adapter(job.cloud_provider, settings.quark, settings.baidu)
