@@ -35,6 +35,8 @@ def process_job(job_id: str) -> None:
             return
         job.status = "running"
         db.commit()
+        transfer_started_at = time.monotonic()
+        initial_uploaded_bytes = job.uploaded_bytes
         remote_directories: dict[str, tuple[str, str]] = {"": (job.remote_directory_id, job.remote_directory_path)}
         for item in sorted(job.items, key=lambda current: current.id):
             db.refresh(job)
@@ -68,6 +70,8 @@ def process_job(job_id: str) -> None:
             def progress(uploaded: int) -> None:
                 item.uploaded_bytes = min(uploaded, item.file_size)
                 job.uploaded_bytes = sum(current.uploaded_bytes for current in job.items)
+                elapsed = max(time.monotonic() - transfer_started_at, 0.001)
+                job.speed_bytes_per_second = max(0, (job.uploaded_bytes - initial_uploaded_bytes) / elapsed)
                 db.commit()
 
             upload_target = current_remote_path if job.cloud_provider == "baidu" else current_remote_id
@@ -82,6 +86,8 @@ def process_job(job_id: str) -> None:
             item.remote_file_id = result.remote_id
             job.completed_files = sum(current.status == "completed" for current in job.items)
             job.uploaded_bytes = sum(current.uploaded_bytes for current in job.items)
+            elapsed = max(time.monotonic() - transfer_started_at, 0.001)
+            job.speed_bytes_per_second = max(0, (job.uploaded_bytes - initial_uploaded_bytes) / elapsed)
             db.commit()
         db.refresh(job)
         if job.status == "cancelled":
