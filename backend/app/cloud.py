@@ -349,11 +349,11 @@ class BaiduPanAdapter:
             self._save_token(refreshed)
             return str(refreshed["access_token"])
 
-    def _api(self, params: dict[str, str], post: dict[str, str] | None = None) -> dict:
+    def _api(self, params: dict[str, str], post: dict[str, str] | None = None, *, retry_safe: bool = False) -> dict:
         token = self._access_token()
         query = urllib.parse.urlencode({**params, "access_token": token})
         body = urllib.parse.urlencode(post).encode() if post is not None else None
-        return self._json_request(f"{self.api_url}?{query}", body, retry_safe=post is None)
+        return self._json_request(f"{self.api_url}?{query}", body, retry_safe=retry_safe or post is None)
 
     def check_auth(self) -> AuthStatus:
         try:
@@ -404,7 +404,7 @@ class BaiduPanAdapter:
             if entry.name == local_path.name:
                 return UploadResult(True, entry.id, "目标已存在，按跳过策略处理")
         remote_path = f"{remote_id.rstrip('/')}/{local_path.name}"
-        precreate = self._api({"method": "precreate"}, {"path": remote_path, "size": str(size), "isdir": "0", "autoinit": "1", "block_list": json.dumps(digests), "rtype": "0"})
+        precreate = self._api({"method": "precreate"}, {"path": remote_path, "size": str(size), "isdir": "0", "autoinit": "1", "block_list": json.dumps(digests), "rtype": "0"}, retry_safe=True)
         upload_id = str(precreate.get("uploadid", ""))
         if not upload_id:
             raise CloudAdapterError("百度网盘未返回分片上传标识")

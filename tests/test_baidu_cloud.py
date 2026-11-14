@@ -78,6 +78,18 @@ class BaiduPanAdapterTests(unittest.TestCase):
         urlopen.assert_called_once()
         sleep.assert_not_called()
 
+    def test_precreate_post_retries_transient_timeouts(self) -> None:
+        with patch.object(self.adapter, "_access_token", return_value="test-token"), \
+             patch.object(self.adapter, "_json_request", return_value={"uploadid": "upload-id"}) as request:
+            result = self.adapter._api(
+                {"method": "precreate"},
+                {"path": "/apps/NAS文件管理/file.txt"},
+                retry_safe=True,
+            )
+
+        self.assertEqual(result, {"uploadid": "upload-id"})
+        self.assertTrue(request.call_args.kwargs["retry_safe"])
+
     def test_upload_retries_transient_part_timeouts(self) -> None:
         source = self.root / "upload.txt"
         source.write_bytes(b"upload contents")
