@@ -572,8 +572,8 @@ def delete_backup(job_id: str, user: User = Depends(current_user), db: DbSession
     job = db.get(BackupJob, job_id)
     if job is None:
         raise HTTPException(status_code=404, detail="任务不存在")
-    if job.status != "failed":
-        raise HTTPException(status_code=409, detail="仅允许删除失败任务")
+    if job.status not in {"failed", "cancelled"}:
+        raise HTTPException(status_code=409, detail="仅允许删除失败或已取消任务")
     audit(db, user, "backup_delete", None, job.source_name, "success")
     db.delete(job)
     db.commit()
