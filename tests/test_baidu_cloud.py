@@ -8,7 +8,7 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from backend.app.cloud import BaiduPanAdapter, CloudAdapterError
+from backend.app.cloud import BaiduPanAdapter, CloudAdapterError, CloudTransientError
 from backend.app.config import BaiduConfig
 
 
@@ -89,6 +89,84 @@ class BaiduPanAdapterTests(unittest.TestCase):
 
         self.assertEqual(result, {"uploadid": "upload-id"})
         self.assertTrue(request.call_args.kwargs["retry_safe"])
+
+    def test_confirmation_recovers_when_response_is_lost(self) -> None:
+        post = {"path": "/apps/NAS文件管理/file.txt", "size": "4", "rtype": "0"}
+        existing = {"path": post["path"], "size": 4, "isdir": 0, "fs_id": "uploaded-id"}
+        with patch.object(self.adapter, "_api", side_effect=[
+            CloudTransientError("timed out"), {"list": [existing]},
+        ]) as api, patch("backend.app.cloud.time.sleep") as sleep:
+            result = self.adapter._complete_upload(post)
+
+        self.assertEqual(result, existing)
+        self.assertEqual([call.args[0]["method"] for call in api.call_args_list], ["create", "list"])
+        sleep.assert_called_once_with(60)
+
+    def test_confirmation_retries_only_after_verifying_file_is_absent(self) -> None:
+        post = {"path": "/apps/NAS文件管理/file.txt", "size": "4", "rtype": "0"}
+        with patch.object(self.adapter, "_api", side_effect=[
+            CloudTransientError("timed out"), {"list": []}, {"fs_id": "uploaded-id"},
+        ]) as api, patch("backend.app.cloud.time.sleep") as sleep:
+            result = self.adapter._complete_upload(post)
+
+        self.assertEqual(result["fs_id"], "uploaded-id")
+        self.assertEqual([call.args[0]["method"] for call in api.call_args_list], ["create", "list", "create"])
+        self.assertEqual(api.call_args.args[1], post)
+        sleep.assert_called_once_with(60)
+
+    def test_confirmation_does_not_resubmit_while_lookup_is_unavailable(self) -> None:
+        post = {"path": "/apps/NAS文件管理/file.txt", "size": "4", "rtype": "0"}
+        with patch.object(self.adapter, "_api", side_effect=[
+            CloudTransientError("timed out"), CloudTransientError("lookup timed out"),
+            {"list": []}, {"fs_id": "uploaded-id"},
+        ]) as api, patch("backend.app.cloud.time.sleep") as sleep:
+            result = self.adapter._complete_upload(post)
+
+        self.assertEqual(result["fs_id"], "uploaded-id")
+        self.assertEqual([call.args[0]["method"] for call in api.call_args_list], ["create", "list", "list", "create"])
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60, 60])
+
+    def test_confirmation_stops_after_ten_retries(self) -> None:
+        post = {"path": "/apps/NAS文件管理/file.txt", "size": "4", "rtype": "0"}
+        def request(params: dict, payload: dict | None = None) -> dict:
+            if params["method"] == "list":
+                return {"list": []}
+            raise CloudTransientError("timed out")
+
+        with patch.object(self.adapter, "_api", side_effect=request) as api, \
+             patch("backend.app.cloud.time.sleep") as sleep:
+            with self.assertRaisesRegex(CloudTransientError, "已用完 10 次重试"):
+                self.adapter._complete_upload(post)
+
+        self.assertEqual(sum(call.args[0]["method"] == "create" for call in api.call_args_list), 11)
+        self.assertEqual([call.args[0] for call in sleep.call_args_list], [60] * 10)
+
+    def test_confirmation_does_not_retry_business_errors(self) -> None:
+        with patch.object(self.adapter, "_api", side_effect=CloudAdapterError("API 错误 (-6)")) as api, \
+             patch("backend.app.cloud.time.sleep") as sleep:
+            with self.assertRaisesRegex(CloudAdapterError, "API 错误"):
+                self.adapter._complete_upload({"path": "/apps/NAS文件管理/file.txt", "size": "4"})
+        api.assert_called_once()
+        sleep.assert_not_called()
+
+    def test_confirmation_rejects_mismatched_existing_file(self) -> None:
+        post = {"path": "/apps/NAS文件管理/file.txt", "size": "4", "rtype": "0"}
+        with patch.object(self.adapter, "_api", side_effect=[
+            CloudTransientError("timed out"),
+            {"list": [{"path": post["path"], "size": 99, "isdir": 0, "fs_id": "other-id"}]},
+        ]) as api, patch("backend.app.cloud.time.sleep"):
+            with self.assertRaisesRegex(CloudAdapterError, "类型或大小不符"):
+                self.adapter._complete_upload(post)
+        self.assertEqual(api.call_count, 2)
+
+    def test_confirmation_lookup_checks_later_directory_pages(self) -> None:
+        existing = {"path": "/apps/NAS文件管理/file.txt", "size": 4, "isdir": 0, "fs_id": "uploaded-id"}
+        with patch.object(self.adapter, "_api", side_effect=[
+            {"list": [{"path": "/other"}] * 1000}, {"list": [existing]},
+        ]) as api:
+            result = self.adapter._find_created_upload(existing["path"], 4)
+        self.assertEqual(result, existing)
+        self.assertEqual(api.call_args.args[0]["start"], "1000")
 
     def test_upload_retries_transient_part_timeouts(self) -> None:
         source = self.root / "upload.txt"

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import selectors
@@ -23,9 +24,14 @@ from .config import BaiduConfig, QuarkConfig
 
 _NETWORK_RETRY_DELAYS = (60,) * 10
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+logger = logging.getLogger(__name__)
 
 
 class CloudAdapterError(RuntimeError):
+    pass
+
+
+class CloudTransientError(CloudAdapterError):
     pass
 
 
@@ -272,11 +278,14 @@ class BaiduPanAdapter:
                 break
             except urllib.error.HTTPError as exc:
                 if not retry_safe or exc.code not in _RETRYABLE_HTTP_STATUS_CODES or attempt == len(_NETWORK_RETRY_DELAYS):
+                    if exc.code in _RETRYABLE_HTTP_STATUS_CODES:
+                        raise CloudTransientError(f"百度网盘临时 HTTP 错误 ({exc.code})") from exc
                     raise CloudAdapterError("百度网盘服务暂时不可用") from exc
             except (urllib.error.URLError, TimeoutError) as exc:
                 if not retry_safe or attempt == len(_NETWORK_RETRY_DELAYS):
-                    raise CloudAdapterError("百度网盘服务暂时不可用") from exc
+                    raise CloudTransientError("百度网盘服务暂时不可用（网络连接异常或超时）") from exc
             if attempt < len(_NETWORK_RETRY_DELAYS):
+                logger.warning("Baidu request %s retry %s/10 in 60 seconds", request.get_method(), attempt + 1)
                 time.sleep(_NETWORK_RETRY_DELAYS[attempt])
         try:
             payload = json.loads(response_body.decode("utf-8"))
@@ -353,7 +362,48 @@ class BaiduPanAdapter:
         token = self._access_token()
         query = urllib.parse.urlencode({**params, "access_token": token})
         body = urllib.parse.urlencode(post).encode() if post is not None else None
-        return self._json_request(f"{self.api_url}?{query}", body, retry_safe=retry_safe or post is None)
+        try:
+            return self._json_request(f"{self.api_url}?{query}", body, retry_safe=retry_safe or post is None)
+        except CloudAdapterError as exc:
+            raise type(exc)(f"百度网盘 {params.get('method', 'unknown')} 接口：{exc}") from exc
+
+    def _find_created_upload(self, remote_path: str, size: int) -> dict | None:
+        start = 0
+        while True:
+            result = self._api({
+                "method": "list", "dir": str(Path(remote_path).parent),
+                "start": str(start), "limit": "1000", "order": "name", "desc": "0",
+            })
+            entries = result.get("list", [])
+            for entry in entries:
+                if entry.get("path") != remote_path:
+                    continue
+                if int(entry.get("isdir", 0)) != 0 or int(entry.get("size", -1)) != size or not entry.get("fs_id"):
+                    raise CloudAdapterError("百度网盘文件合并确认失败：目标已存在但类型或大小不符")
+                return entry
+            if len(entries) < 1000:
+                return None
+            start += len(entries)
+
+    def _complete_upload(self, post: dict[str, str]) -> dict:
+        for attempt in range(len(_NETWORK_RETRY_DELAYS) + 1):
+            try:
+                if attempt:
+                    existing = self._find_created_upload(post["path"], int(post["size"]))
+                    if existing is not None:
+                        return existing
+                return self._api({"method": "create"}, post)
+            except CloudTransientError as exc:
+                if attempt == len(_NETWORK_RETRY_DELAYS):
+                    try:
+                        existing = self._find_created_upload(post["path"], int(post["size"]))
+                        if existing is not None:
+                            return existing
+                    except CloudTransientError:
+                        pass
+                    raise CloudTransientError("百度网盘文件合并确认失败：网络异常，已用完 10 次重试") from exc
+                logger.warning("Baidu upload confirmation retry %s/10 in 60 seconds", attempt + 1)
+                time.sleep(_NETWORK_RETRY_DELAYS[attempt])
 
     def check_auth(self) -> AuthStatus:
         try:
@@ -463,7 +513,7 @@ class BaiduPanAdapter:
                     raise CloudAdapterError(f"百度网盘分片上传错误 ({part_result.get('errno')})")
                 uploaded += len(chunk)
                 progress_callback(uploaded)
-        created = self._api({"method": "create"}, {"path": remote_path, "size": str(size), "isdir": "0", "uploadid": upload_id, "block_list": json.dumps(digests), "rtype": "0"})
+        created = self._complete_upload({"path": remote_path, "size": str(size), "isdir": "0", "uploadid": upload_id, "block_list": json.dumps(digests), "rtype": "0"})
         return UploadResult(True, str(created.get("fs_id", "")) or None, "上传成功")
 
 
