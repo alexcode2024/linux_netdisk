@@ -10,6 +10,7 @@ import tempfile
 import threading
 import time
 import hashlib
+import http.client
 import mimetypes
 import secrets
 import urllib.error
@@ -33,6 +34,25 @@ class CloudAdapterError(RuntimeError):
 
 class CloudTransientError(CloudAdapterError):
     pass
+
+
+class BaiduAPIError(CloudAdapterError):
+    def __init__(self, operation: str, category: str, message: str, *, code: str | None = None,
+                 request_id: str | None = None, http_status: int | None = None, retryable: bool = False):
+        self.operation = operation
+        self.category = category
+        self.code = code
+        self.request_id = request_id
+        self.http_status = http_status
+        self.retryable = retryable
+        details = [f"百度网盘 {operation} 接口", category, message]
+        if code is not None:
+            details.append(f"errno={code}")
+        if http_status is not None:
+            details.append(f"HTTP={http_status}")
+        if request_id:
+            details.append(f"request_id={request_id}")
+        super().__init__("；".join(details))
 
 
 @dataclass
@@ -269,34 +289,110 @@ class BaiduPanAdapter:
         return f"{self.oauth_authorize_url}?{query}"
 
     @staticmethod
-    def _json_request(url: str, data: bytes | None = None, timeout: int = 30, retry_safe: bool = False) -> dict:
-        request = urllib.request.Request(url, data=data, headers={"User-Agent": "NAS-Backup/1.0"})
+    def _safe_response_text(value: object, request: urllib.request.Request) -> str:
+        text = str(value)
+        parameters = urllib.parse.parse_qs(urllib.parse.urlparse(request.full_url).query)
+        if request.data and request.get_header("Content-type", "").startswith("application/x-www-form-urlencoded"):
+            parameters.update(urllib.parse.parse_qs(request.data.decode("utf-8", errors="replace")))
+        for key in ("access_token", "refresh_token", "client_secret", "secretkey", "signkey", "code"):
+            for secret in parameters.get(key, []):
+                if secret:
+                    text = text.replace(secret, "[已隐藏]").replace(urllib.parse.quote(secret, safe=""), "[已隐藏]")
+        text = re.sub(r"https?://\S+", "[链接已隐藏]", text)
+        text = re.sub(r"(?i)(access_token|refresh_token|client_secret|secretkey|signkey)\s*[=:]\s*[^\s,;]+", r"\1=[已隐藏]", text)
+        return " ".join(text.split())[:300]
+
+    @classmethod
+    def _parse_response(cls, body: bytes, request: urllib.request.Request, operation: str,
+                        http_status: int = 200, request_id: object = None, expected_md5: str | None = None) -> dict:
+        try:
+            payload = json.loads(body.decode("utf-8"))
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            payload = None
+        if isinstance(payload, dict):
+            request_id = payload.get("request_id") or request_id
+        safe_id = re.sub(r"[^a-zA-Z0-9_:.-]", "", cls._safe_response_text(request_id or "", request))[:128] or None
+        context = {"http_status": http_status, "request_id": safe_id}
+        if not isinstance(payload, dict):
+            raise BaiduAPIError(operation, "响应异常", "返回内容不是有效 JSON 对象", **context,
+                                retryable=http_status in _RETRYABLE_HTTP_STATUS_CODES or http_status < 400)
+        code = payload.get("errno", payload.get("error_code", payload.get("error")))
+        code = cls._safe_response_text(code, request) if code is not None else None
+        failed = code not in (None, "0")
+        category, hint, retryable = "业务错误", "请核对接口参数及应用权限", False
+        if code in {"-6", "20016", "20017", "31045", "invalid_grant", "invalid_token", "expired_token"}:
+            category, hint = "授权异常", "请刷新授权凭据或重新授权"
+        if code in {"31034"}:
+            category, hint, retryable = "接口限流", "调用过于频繁，请降低请求频率", True
+        elif code == "20012":
+            category, hint = "调用额度限制", "请检查应用审核状态、调用额度和调用频率"
+        elif code in {"20013", "20015", "20020", "31024", "-7"}:
+            category, hint = "权限或路径异常", "请检查应用权限和授权目录"
+        elif code in {"2", "31023", "20021", "20022", "20023", "31062", "31064", "31355"}:
+            category, hint = "参数异常", "请核对路径、uploadid 和上传阶段参数"
+        elif code in {"-8", "31061"}:
+            category, hint = "目标已存在", "请核对目标文件及命名策略"
+        elif code == "-10" and operation in {"create", "precreate"}:
+            category, hint = "容量不足", "请清理网盘空间或增加容量"
+        elif code in {"31299", "31364", "31365"}:
+            category, hint = "上传大小限制", "请检查用户权益、文件大小和分片大小"
+        elif code in {"31190", "31363"} and operation in {"create", "precreate", "upload"}:
+            category, hint = "分片不完整", "请核对分片 MD5、文件大小并重新上传失败文件"
+        elif code == "42905" and operation == "uinfo":
+            category, hint, retryable = "临时服务异常", "查询用户信息失败，可稍后重试", True
+        elif code == "111" and operation == "filemanager":
+            category, hint, retryable = "任务忙碌", "存在其他异步任务，请稍后重试", True
+        if failed and category == "业务错误" and http_status in _RETRYABLE_HTTP_STATUS_CODES:
+            retryable = True
+        if not failed and http_status >= 400:
+            category, hint = "HTTP 错误", "百度网盘服务返回 HTTP 错误"
+            retryable = http_status in _RETRYABLE_HTTP_STATUS_CODES
+        if failed or http_status >= 400:
+            message = cls._safe_response_text(payload.get("errmsg") or payload.get("error_msg") or payload.get("error_description") or "", request)
+            error = BaiduAPIError(operation, category, f"{hint}{'；' + message if message else ''}",
+                                  code=code, retryable=retryable, **context)
+            logger.warning("%s", error)
+            raise error
+        required_fields = {"create": "fs_id", "precreate": "uploadid", "list": "list"}
+        required = required_fields.get(operation)
+        if required and (required not in payload or payload[required] is None):
+            raise BaiduAPIError(operation, "响应异常", f"成功响应缺少 {required}", retryable=True, **context)
+        if operation == "list" and not isinstance(payload.get("list"), list):
+            raise BaiduAPIError(operation, "响应异常", "文件列表格式无效", retryable=True, **context)
+        if expected_md5 is not None:
+            remote_md5 = payload.get("md5")
+            if not isinstance(remote_md5, str) or remote_md5.lower() != expected_md5.lower():
+                raise BaiduAPIError(operation, "分片校验失败", "分片上传失败：服务端 MD5 缺失或与本地不一致", retryable=True, **context)
+        logger.info("Baidu %s success request_id=%s", operation, safe_id or "unavailable")
+        return payload
+
+    @classmethod
+    def _json_request(cls, url: str, data: bytes | None = None, timeout: int = 30, retry_safe: bool = False,
+                      *, headers: dict[str, str] | None = None, expected_md5: str | None = None) -> dict:
+        request = urllib.request.Request(url, data=data, headers={"User-Agent": "NAS-Backup/1.0", **(headers or {})})
+        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
+        operation = query.get("method", ["oauth" if "/oauth/" in url else "request"])[0]
+        operation = re.sub(r"[^a-zA-Z0-9_-]", "", operation)[:40]
         for attempt in range(len(_NETWORK_RETRY_DELAYS) + 1):
             try:
-                with urllib.request.urlopen(request, timeout=timeout) as response:
-                    response_body = response.read()
-                break
-            except urllib.error.HTTPError as exc:
-                if not retry_safe or exc.code not in _RETRYABLE_HTTP_STATUS_CODES or attempt == len(_NETWORK_RETRY_DELAYS):
-                    if exc.code in _RETRYABLE_HTTP_STATUS_CODES:
-                        raise CloudTransientError(f"百度网盘临时 HTTP 错误 ({exc.code})") from exc
-                    raise CloudAdapterError("百度网盘服务暂时不可用") from exc
-            except (urllib.error.URLError, TimeoutError) as exc:
-                if not retry_safe or attempt == len(_NETWORK_RETRY_DELAYS):
-                    raise CloudTransientError("百度网盘服务暂时不可用（网络连接异常或超时）") from exc
-            if attempt < len(_NETWORK_RETRY_DELAYS):
-                logger.warning("Baidu request %s retry %s/10 in 60 seconds", request.get_method(), attempt + 1)
+                try:
+                    with urllib.request.urlopen(request, timeout=timeout) as response:
+                        status = response.getcode()
+                        return cls._parse_response(response.read(), request, operation,
+                                                   status if isinstance(status, int) else 200,
+                                                   response.headers.get("X-Request-Id"),
+                                                   expected_md5=expected_md5)
+                except urllib.error.HTTPError as exc:
+                    with exc:
+                        return cls._parse_response(exc.read(), request, operation, exc.code,
+                                                   exc.headers.get("X-Request-Id") if exc.headers else None)
+                except (urllib.error.URLError, TimeoutError, ConnectionError, http.client.IncompleteRead):
+                    raise BaiduAPIError(operation, "网络异常", "百度网盘服务暂时不可用（连接失败或超时）", retryable=True) from None
+            except BaiduAPIError as exc:
+                if not retry_safe or not exc.retryable or attempt == len(_NETWORK_RETRY_DELAYS):
+                    raise
+                logger.warning("%s；retry=%s/10 delay=60s", exc, attempt + 1)
                 time.sleep(_NETWORK_RETRY_DELAYS[attempt])
-        try:
-            payload = json.loads(response_body.decode("utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise CloudAdapterError("百度网盘服务暂时不可用") from exc
-        if not isinstance(payload, dict):
-            raise CloudAdapterError("百度网盘返回了无效响应")
-        error = payload.get("errno", payload.get("error"))
-        if error not in (None, 0, "0"):
-            raise CloudAdapterError(f"百度网盘 API 错误 ({error})")
-        return payload
 
     def exchange_code(self, code: str) -> None:
         if not self.config.redirect_uri or not self.config.token_file:
@@ -362,10 +458,8 @@ class BaiduPanAdapter:
         token = self._access_token()
         query = urllib.parse.urlencode({**params, "access_token": token})
         body = urllib.parse.urlencode(post).encode() if post is not None else None
-        try:
-            return self._json_request(f"{self.api_url}?{query}", body, retry_safe=retry_safe or post is None)
-        except CloudAdapterError as exc:
-            raise type(exc)(f"百度网盘 {params.get('method', 'unknown')} 接口：{exc}") from exc
+        return self._json_request(f"{self.api_url}?{query}", body, retry_safe=retry_safe or post is None,
+                                  headers={"Content-Type": "application/x-www-form-urlencoded"})
 
     def _find_created_upload(self, remote_path: str, size: int) -> dict | None:
         start = 0
@@ -393,7 +487,13 @@ class BaiduPanAdapter:
                     if existing is not None:
                         return existing
                 return self._api({"method": "create"}, post)
-            except CloudTransientError as exc:
+            except (CloudTransientError, BaiduAPIError) as exc:
+                if isinstance(exc, BaiduAPIError) and not exc.retryable:
+                    if exc.code in {"-8", "31061"}:
+                        existing = self._find_created_upload(post["path"], int(post["size"]))
+                        if existing is not None:
+                            return existing
+                    raise
                 if attempt == len(_NETWORK_RETRY_DELAYS):
                     try:
                         existing = self._find_created_upload(post["path"], int(post["size"]))
@@ -401,7 +501,10 @@ class BaiduPanAdapter:
                             return existing
                     except CloudTransientError:
                         pass
-                    raise CloudTransientError("百度网盘文件合并确认失败：网络异常，已用完 10 次重试") from exc
+                    except BaiduAPIError as lookup_error:
+                        if not lookup_error.retryable:
+                            raise
+                    raise CloudTransientError(f"百度网盘文件合并确认失败：已用完 10 次重试；{exc}") from exc
                 logger.warning("Baidu upload confirmation retry %s/10 in 60 seconds", attempt + 1)
                 time.sleep(_NETWORK_RETRY_DELAYS[attempt])
 
@@ -490,27 +593,10 @@ class BaiduPanAdapter:
                 prefix = (f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; filename=\"blob\"\r\nContent-Type: {mimetypes.guess_type(local_path.name)[0] or 'application/octet-stream'}\r\n\r\n").encode()
                 body = prefix + chunk + f"\r\n--{boundary}--\r\n".encode()
                 query = urllib.parse.urlencode({"method": "upload", "type": "tmpfile", "path": remote_path, "uploadid": upload_id, "partseq": str(part_index), "access_token": self._access_token()})
-                request = urllib.request.Request(f"{upload_host.rstrip('/')}/rest/2.0/pcs/superfile2?{query}", data=body, headers={"Content-Type": f"multipart/form-data; boundary={boundary}", "User-Agent": "NAS-Backup/1.0"})
-                for attempt in range(len(_NETWORK_RETRY_DELAYS) + 1):
-                    try:
-                        with urllib.request.urlopen(request, timeout=300) as response:
-                            response_body = response.read()
-                    except urllib.error.HTTPError as exc:
-                        if exc.code not in _RETRYABLE_HTTP_STATUS_CODES or attempt == len(_NETWORK_RETRY_DELAYS):
-                            raise CloudAdapterError("百度网盘分片上传失败") from exc
-                    except (urllib.error.URLError, TimeoutError) as exc:
-                        if attempt == len(_NETWORK_RETRY_DELAYS):
-                            raise CloudAdapterError("百度网盘分片上传失败") from exc
-                    else:
-                        break
-                    if attempt < len(_NETWORK_RETRY_DELAYS):
-                        time.sleep(_NETWORK_RETRY_DELAYS[attempt])
-                try:
-                    part_result = json.loads(response_body.decode("utf-8"))
-                except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-                    raise CloudAdapterError("百度网盘分片上传失败") from exc
-                if part_result.get("errno", 0) != 0:
-                    raise CloudAdapterError(f"百度网盘分片上传错误 ({part_result.get('errno')})")
+                self._json_request(f"{upload_host.rstrip('/')}/rest/2.0/pcs/superfile2?{query}", body,
+                                   timeout=300, retry_safe=True,
+                                   headers={"Content-Type": f"multipart/form-data; boundary={boundary}"},
+                                   expected_md5=digest)
                 uploaded += len(chunk)
                 progress_callback(uploaded)
         created = self._complete_upload({"path": remote_path, "size": str(size), "isdir": "0", "uploadid": upload_id, "block_list": json.dumps(digests), "rtype": "0"})

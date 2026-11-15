@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 import urllib.error
@@ -8,11 +9,16 @@ from pathlib import Path
 from unittest.mock import Mock, patch
 from urllib.parse import parse_qs, urlparse
 
-from backend.app.cloud import BaiduPanAdapter, CloudAdapterError, CloudTransientError
+from backend.app.cloud import BaiduPanAdapter, BaiduAPIError, CloudAdapterError, CloudTransientError
 from backend.app.config import BaiduConfig
 
 
 class BaiduPanAdapterTests(unittest.TestCase):
+    def upload_request(self, url: str, *args, **kwargs) -> dict:
+        if "method=locateupload" in url:
+            return {"host": "https://d.pcs.baidu.com"}
+        return BaiduPanAdapter._json_request(url, *args, **kwargs)
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.root = Path(self.temporary.name)
@@ -58,6 +64,7 @@ class BaiduPanAdapterTests(unittest.TestCase):
         response = Mock()
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
+        response.headers = {}
         response.read.return_value = b'{"errno":0}'
         with patch("backend.app.cloud.urllib.request.urlopen", side_effect=[
             urllib.error.URLError("timed out"),
@@ -176,11 +183,12 @@ class BaiduPanAdapterTests(unittest.TestCase):
             {"uploadid": "upload-id", "block_list": [0]},
             {"fs_id": "uploaded-id"},
         ])
-        self.adapter._json_request = Mock(return_value={"host": "https://d.pcs.baidu.com"})
+        self.adapter._json_request = Mock(side_effect=self.upload_request)
         response = Mock()
         response.__enter__ = Mock(return_value=response)
         response.__exit__ = Mock(return_value=False)
-        response.read.return_value = b'{"errno":0}'
+        response.headers = {}
+        response.read.return_value = json.dumps({"md5": hashlib.md5(b"upload contents").hexdigest()}).encode()
         with patch("backend.app.cloud.BaiduPanAdapter.app_root", return_value="/apps/NAS文件管理"), \
              patch("backend.app.cloud.BaiduPanAdapter.list_directory", return_value=[]), \
              patch.object(self.adapter, "_access_token", return_value="test-token"), \
@@ -202,13 +210,13 @@ class BaiduPanAdapterTests(unittest.TestCase):
         source = self.root / "upload.txt"
         source.write_bytes(b"upload contents")
         self.adapter._api = Mock(return_value={"uploadid": "upload-id", "block_list": [0]})
-        self.adapter._json_request = Mock(return_value={"host": "https://d.pcs.baidu.com"})
+        self.adapter._json_request = Mock(side_effect=self.upload_request)
         with patch("backend.app.cloud.BaiduPanAdapter.app_root", return_value="/apps/NAS文件管理"), \
              patch("backend.app.cloud.BaiduPanAdapter.list_directory", return_value=[]), \
              patch.object(self.adapter, "_access_token", return_value="test-token"), \
              patch("backend.app.cloud.urllib.request.urlopen", side_effect=urllib.error.URLError("timed out")) as urlopen, \
              patch("backend.app.cloud.time.sleep") as sleep:
-            with self.assertRaisesRegex(CloudAdapterError, "分片上传失败"):
+            with self.assertRaisesRegex(CloudAdapterError, "upload.*网络异常"):
                 self.adapter.upload_file(source, "/apps/NAS文件管理", lambda _: None)
 
         self.assertEqual(urlopen.call_count, 11)
