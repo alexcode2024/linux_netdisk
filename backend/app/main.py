@@ -473,11 +473,12 @@ def baidu_callback(request: Request, state: str = "", code: str = "", error: str
 
 
 @app.get("/api/v1/cloud/baidu/directories")
-def baidu_directories(request: Request, fid: str = "/", path: str = "/", user: User = Depends(current_user)) -> list[dict[str, str]]:
+def baidu_directories(request: Request, fid: str = "/", path: str = "/", user: User = Depends(current_user)) -> list[dict[str, object]]:
     try:
         settings = settings_for(request)
         entries = get_cloud_adapter("baidu", settings.quark, settings.baidu).list_directory(fid, path)
-        return [{"id": entry.id, "name": entry.name, "path": entry.path, "type": entry.type} for entry in entries]
+        return [{"id": entry.id, "name": entry.name, "path": entry.path, "type": entry.type,
+                 "size": entry.size, "modified_at": entry.modified_at} for entry in entries]
     except CloudAdapterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

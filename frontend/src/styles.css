@@ -156,6 +156,7 @@ input:focus { border-color: #6481e6; box-shadow: 0 0 0 3px #6481e61a; }
 .quark-breadcrumb button { text-align: left; overflow-wrap: anywhere; }
 .quark-file-table { overflow-x: auto; }
 .quark-file-table .quark-file-grid { display: grid; grid-template-columns: minmax(190px, 1fr) 85px 155px 72px; min-width: 580px; gap: 16px; align-items: center; padding: 0 18px; }
+.baidu-file-table .quark-file-grid { grid-template-columns: minmax(190px, 1fr) 85px 155px; min-width: 480px; }
 .quark-file-row { min-height: 58px; border-bottom: 1px solid var(--quark-border); color: var(--quark-text); font-size: 12px; }
 .quark-file-row:last-child { border-bottom: 0; }
 .quark-file-name { display: flex; align-items: center; gap: 10px; min-width: 0; border: 0; padding: 0; color: inherit; background: transparent; text-align: left; font-size: 13px; }

@@ -30,7 +30,7 @@ import {
 } from 'lucide-react'
 import './styles.css'
 import { api } from './api'
-import { QuarkDrive } from './QuarkDrive'
+import { CloudDrive } from './CloudDrive'
 
 type Root = { id: string; name: string; read_only: boolean; allow_upload: boolean }
 type FileEntry = { name: string; relative_path: string; type: 'file' | 'directory' | 'symlink' | 'other'; size: number | null; modified_at: string; extension?: string | null }
@@ -153,7 +153,7 @@ function App() {
 }
 
 function Workspace({ username, theme, onToggleTheme, onLogout }: { username: string; theme: Theme; onToggleTheme: () => void; onLogout: () => void }) {
-  const [page, setPage] = useState<'files' | 'quark' | 'tasks' | 'settings'>('files')
+  const [page, setPage] = useState<'files' | 'quark' | 'baidu' | 'tasks' | 'settings'>('files')
   const [sidebarOpen, setSidebarOpen] = useState(false)
   const { statuses, refreshStatuses } = useCloudStatuses()
   const [roots, setRoots] = useState<Root[]>([])
@@ -161,11 +161,11 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
   const [activePath, setActivePath] = useState('')
   const [refreshToken, setRefreshToken] = useState(0)
   useEffect(() => { api<Root[]>('/api/v1/roots').then(data => { setRoots(data); if (!activeRoot && data[0]) setActiveRoot(data[0].id) }).catch(() => undefined) }, [activeRoot])
-  const navigate = (next: 'files' | 'quark' | 'tasks' | 'settings') => { setPage(next); setSidebarOpen(false) }
+  const navigate = (next: 'files' | 'quark' | 'baidu' | 'tasks' | 'settings') => { setPage(next); setSidebarOpen(false) }
   const logout = async () => { await api('/api/v1/auth/logout', { method: 'POST' }).catch(() => undefined); onLogout() }
   return <div className="app-shell">
     <header className="topbar">
-      <div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(value => !value)}><Menu size={20} /></button><div className="brand-inline"><div className="brand-mark small"><HardDrive size={18} /></div><span>Ubuntu文件网盘备份</span></div><span className="topbar-tag">{{ files: '文件管理', quark: '夸克网盘', tasks: '备份任务', settings: '系统设置' }[page]}</span></div>
+      <div className="topbar-left"><button className="icon-button mobile-menu" onClick={() => setSidebarOpen(value => !value)}><Menu size={20} /></button><div className="brand-inline"><div className="brand-mark small"><HardDrive size={18} /></div><span>Ubuntu文件网盘备份</span></div><span className="topbar-tag">{{ files: '文件管理', quark: '夸克网盘', baidu: '百度网盘', tasks: '备份任务', settings: '系统设置' }[page]}</span></div>
     </header>
     <div className="body-shell">
       <aside className={`sidebar ${sidebarOpen ? 'open' : ''}`}>
@@ -173,6 +173,7 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
           <div className="side-section-label">工作区</div>
           <button className={`nav-item ${page === 'files' ? 'active' : ''}`} onClick={() => navigate('files')}><LayoutDashboard size={18} />文件管理</button>
           <button className={`nav-item ${page === 'quark' ? 'active' : ''}`} onClick={() => navigate('quark')}><HardDrive size={18} />夸克网盘</button>
+          <button className={`nav-item ${page === 'baidu' ? 'active' : ''}`} onClick={() => navigate('baidu')}><HardDrive size={18} />百度网盘</button>
           <button className={`nav-item ${page === 'tasks' ? 'active' : ''}`} onClick={() => navigate('tasks')}><CloudUpload size={18} />备份任务</button>
           <div className="sidebar-status-header"><div className="side-section-label">系统状态</div><button className="sidebar-status-refresh" aria-label="刷新状态" title="刷新状态" onClick={() => void refreshStatuses()}><RefreshCw size={14} /></button></div>
           <div className="sidebar-status-list">
@@ -220,7 +221,7 @@ function Workspace({ username, theme, onToggleTheme, onLogout }: { username: str
       <main className="main-content">
         {page === 'files' && <FileManager root={roots.find(root => root.id === activeRoot)} rootId={activeRoot} path={activePath} onPathChange={setActivePath} refreshToken={refreshToken} onRefresh={() => setRefreshToken(value => value + 1)} />}
         {page === 'tasks' && <TaskCenter />}
-        {page === 'quark' && <QuarkDrive />}
+        {(page === 'quark' || page === 'baidu') && <CloudDrive key={page} provider={page} />}
         {page === 'settings' && <SettingsPage statuses={statuses} onRefresh={refreshStatuses} />}
       </main>
     </div>

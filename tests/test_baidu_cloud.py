@@ -60,6 +60,46 @@ class BaiduPanAdapterTests(unittest.TestCase):
         self.assertEqual(json.loads(self.config.token_file.read_text())["access_token"], "sample-token")
         self.assertEqual(self.config.token_file.stat().st_mode & 0o777, 0o600)
 
+    def test_directory_listing_includes_size_and_millisecond_timestamps(self) -> None:
+        self.config.app_name = "NAS文件管理"
+        root = self.adapter.app_root()
+        with patch.object(self.adapter, "_api", return_value={"list": [
+            {"fs_id": 123, "path": f"{root}/资料", "server_filename": "资料", "isdir": 1},
+            {"fs_id": 456, "path": f"{root}/notes.txt", "isdir": 0, "size": 2048,
+             "server_mtime": 1700000000, "local_mtime": 1600000000},
+            {"fs_id": 789, "path": f"{root}/empty.txt", "isdir": 0, "size": 0,
+             "local_mtime": 1600000000},
+        ]}) as api:
+            entries = self.adapter.list_directory("/", "/")
+        self.assertEqual(api.call_args.args[0]["dir"], root)
+        self.assertEqual([(entry.id, entry.type) for entry in entries],
+                         [("123", "directory"), ("456", "file"), ("789", "file")])
+        self.assertIsNone(entries[0].size)
+        self.assertIsNone(entries[0].modified_at)
+        self.assertEqual(entries[1].size, 2048)
+        self.assertEqual(entries[1].modified_at, 1700000000000)
+        self.assertEqual(entries[2].size, 0)
+        self.assertEqual(entries[2].modified_at, 1600000000000)
+
+    def test_directory_listing_ignores_invalid_optional_metadata(self) -> None:
+        self.config.app_name = "NAS文件管理"
+        root = self.adapter.app_root()
+        for size, modified_at in [("unknown", "unknown"), (-1, -1), (True, True)]:
+            with self.subTest(size=size, modified_at=modified_at), patch.object(self.adapter, "_api", return_value={
+                "list": [{"path": f"{root}/notes.txt", "size": size, "server_mtime": modified_at}],
+            }):
+                entry = self.adapter.list_directory("/", "/")[0]
+                self.assertIsNone(entry.size)
+                self.assertIsNone(entry.modified_at)
+
+    def test_directory_listing_rejects_paths_outside_current_app(self) -> None:
+        self.config.app_name = "NAS文件管理"
+        with patch.object(self.adapter, "_api") as api:
+            for path in ["/个人文件", f"{self.adapter.app_root()}-other", "/apps/another-app"]:
+                with self.subTest(path=path), self.assertRaises(CloudAdapterError):
+                    self.adapter.list_directory("123", path)
+        api.assert_not_called()
+
     def test_json_get_retries_transient_service_timeouts(self) -> None:
         response = Mock()
         response.__enter__ = Mock(return_value=response)

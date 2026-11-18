@@ -642,7 +642,14 @@ class BaiduPanAdapter:
         entries = []
         for item in result.get("list", []):
             path = str(item.get("path", ""))
-            entries.append(RemoteEntry(str(item.get("fs_id", path)), str(item.get("server_filename", Path(path).name)), path, "directory" if int(item.get("isdir", 0)) else "file"))
+            size = item.get("size")
+            modified_at = item.get("server_mtime") or item.get("local_mtime")
+            entries.append(RemoteEntry(
+                str(item.get("fs_id", path)), str(item.get("server_filename", Path(path).name)), path,
+                "directory" if int(item.get("isdir", 0)) else "file",
+                size if type(size) is int and size >= 0 else None,
+                modified_at * 1000 if type(modified_at) is int and modified_at > 0 else None,
+            ))
         return entries
 
     def create_directory(self, parent_id: str, parent_path: str, name: str) -> RemoteEntry:

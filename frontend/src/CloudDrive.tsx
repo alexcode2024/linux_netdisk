@@ -4,7 +4,11 @@ import { api } from './api'
 
 type RemoteEntry = { id: string; name: string; path: string; type: string; size?: number | null; modified_at?: number | null }
 type ShareResult = { share_url: string; passcode: string | null }
-const rootFolder: RemoteEntry = { id: '0', name: '全部文件', path: '/', type: 'directory' }
+type CloudProvider = 'quark' | 'baidu'
+const rootFolders: Record<CloudProvider, RemoteEntry> = {
+  quark: { id: '0', name: '全部文件', path: '/', type: 'directory' },
+  baidu: { id: '/', name: '应用目录', path: '/', type: 'directory' },
+}
 const expirationOptions = [[1, '永久有效'], [2, '1 天'], [3, '7 天'], [4, '30 天'], [5, '60 天'], [6, '100 天'], [7, '180 天']] as const
 const sortedEntries = (entries: RemoteEntry[]) => [...entries].sort((left, right) =>
   Number(right.type === 'directory') - Number(left.type === 'directory') || left.name.localeCompare(right.name, 'zh-CN'))
@@ -102,8 +106,9 @@ function ShareDialog({ entry, onClose }: { entry: RemoteEntry; onClose: () => vo
   </div>
 }
 
-export function QuarkDrive() {
-  const [ancestors, setAncestors] = useState<RemoteEntry[]>([rootFolder])
+export function CloudDrive({ provider }: { provider: CloudProvider }) {
+  const name = provider === 'quark' ? '夸克网盘' : '百度网盘'
+  const [ancestors, setAncestors] = useState<RemoteEntry[]>([rootFolders[provider]])
   const [cache, setCache] = useState<Record<string, RemoteEntry[]>>({})
   const [loading, setLoading] = useState<Set<string>>(new Set())
   const [errors, setErrors] = useState<Record<string, string>>({})
@@ -118,7 +123,7 @@ export function QuarkDrive() {
     if (!force && cached.current[folder.id]) return Promise.resolve()
     setLoading(previous => new Set(previous).add(folder.id))
     setErrors(previous => ({ ...previous, [folder.id]: '' }))
-    const request = api<RemoteEntry[]>(`/api/v1/cloud/quark/directories?fid=${encodeURIComponent(folder.id)}&path=${encodeURIComponent(folder.path)}`)
+    const request = api<RemoteEntry[]>(`/api/v1/cloud/${provider}/directories?fid=${encodeURIComponent(folder.id)}&path=${encodeURIComponent(folder.path)}`)
       .then(entries => {
         const sorted = sortedEntries(entries)
         cached.current = { ...cached.current, [folder.id]: sorted }
@@ -131,21 +136,21 @@ export function QuarkDrive() {
       })
     inFlight.current.set(folder.id, request)
     return request
-  }, [])
+  }, [provider])
   useEffect(() => { void loadDirectory(selected) }, [selected, loadDirectory])
   const openFolder = (trail: RemoteEntry[]) => setAncestors(trail)
   const entries = cache[selected.id]
-  return <div className="page-content quark-page">
-      <section className="quark-files" aria-label="夸克网盘文件列表">
-        <div className="breadcrumb-toolbar"><div className="breadcrumb-row quark-breadcrumb">{ancestors.map((folder, index) => <span className="breadcrumb-part" key={folder.id}>{index > 0 && <ChevronRight size={14} />}<button title={folder.path} onClick={() => openFolder(ancestors.slice(0, index + 1))}>{folder.name}</button></span>)}</div><button className="icon-button refresh-button" disabled={loading.has(selected.id)} onClick={() => void loadDirectory(selected, true)} aria-label="刷新夸克网盘" title="刷新夸克网盘"><RefreshCw size={17} /></button></div>
+  return <div className={`page-content quark-page ${provider}-drive-page`}>
+      <section className="quark-files" aria-label={`${name}文件列表`}>
+        <div className="breadcrumb-toolbar"><div className="breadcrumb-row quark-breadcrumb">{ancestors.map((folder, index) => <span className="breadcrumb-part" key={folder.id}>{index > 0 && <ChevronRight size={14} />}<button title={folder.path} onClick={() => openFolder(ancestors.slice(0, index + 1))}>{folder.name}</button></span>)}</div><button className="icon-button refresh-button" disabled={loading.has(selected.id)} onClick={() => void loadDirectory(selected, true)} aria-label={`刷新${name}`} title={`刷新${name}`}><RefreshCw size={17} /></button></div>
         {errors[selected.id] && <div className="form-error" role="alert">{errors[selected.id]} <button className="link-button" onClick={() => void loadDirectory(selected, true)}>重试</button></div>}
-        <div className="table-card quark-file-table">
-          <div className="table-head quark-file-grid"><span>名称</span><span>大小</span><span>修改时间</span><span className="action-header">操作</span></div>
+        <div className={`table-card quark-file-table ${provider}-file-table`}>
+          <div className="table-head quark-file-grid"><span>名称</span><span>大小</span><span>修改时间</span>{provider === 'quark' && <span className="action-header">操作</span>}</div>
           {loading.has(selected.id) && !entries ? <div className="table-empty"><div className="spinner" />正在读取网盘目录…</div> : entries?.length ? entries.map(entry => <div className="quark-file-row quark-file-grid" key={entry.id}>
             {entry.type === 'directory' ? <button className="quark-file-name" title={entry.name} onClick={() => openFolder([...ancestors, entry])}><Folder size={19} /><span>{entry.name}</span></button> : <span className="quark-file-name" title={entry.name}><File size={19} /><span>{entry.name}</span></span>}
             <span>{entry.type === 'directory' ? '—' : formatSize(entry.size)}</span>
             <span>{entry.modified_at ? new Date(entry.modified_at).toLocaleString('zh-CN', { hour12: false }) : '—'}</span>
-            <span className="quark-file-actions"><button className="link-button" aria-label={`分享${entry.name}`} onClick={() => setShareEntry(entry)}><Share2 size={15} />分享</button></span>
+            {provider === 'quark' && <span className="quark-file-actions"><button className="link-button" aria-label={`分享${entry.name}`} onClick={() => setShareEntry(entry)}><Share2 size={15} />分享</button></span>}
           </div>) : !loading.has(selected.id) && !errors[selected.id] && <div className="table-empty"><FolderOpen size={28} /><span>此文件夹为空</span></div>}
         </div>
       </section>
