@@ -25,6 +25,12 @@ from .config import BaiduConfig, QuarkConfig
 
 _NETWORK_RETRY_DELAYS = (60,) * 10
 _RETRYABLE_HTTP_STATUS_CODES = frozenset({408, 425, 429, 500, 502, 503, 504})
+_QUARK_UPLOAD_TASK_PATTERN = re.compile(r"\[UploadManager\]\s*Task\s+([0-9a-fA-F-]{36})\s+upload failed", re.IGNORECASE)
+_QUARK_UPLOAD_CODE_PATTERN = re.compile(r"upload failed:\s*\[(-?\d+)\]", re.IGNORECASE)
+_QUARK_TRANSIENT_UPLOAD_ERROR_PATTERN = re.compile(
+    r"SocketTimeoutException|Read timed out|timed out|ETIMEDOUT|ECONNRESET|Connection reset",
+    re.IGNORECASE,
+)
 logger = logging.getLogger(__name__)
 
 
@@ -34,6 +40,16 @@ class CloudAdapterError(RuntimeError):
 
 class CloudTransientError(CloudAdapterError):
     pass
+
+
+class QuarkCLIError(CloudAdapterError):
+    def __init__(self, message: str, *, code: str | None = None, record_id: str | None = None):
+        task_match = _QUARK_UPLOAD_TASK_PATTERN.search(message)
+        code_match = _QUARK_UPLOAD_CODE_PATTERN.search(message)
+        self.record_id = record_id or (task_match.group(1) if task_match else None)
+        self.code = code or (code_match.group(1) if code_match else None)
+        self.retryable = self.code == "53000" or bool(_QUARK_TRANSIENT_UPLOAD_ERROR_PATTERN.search(message))
+        super().__init__(f"[{self.code}] {message}" if self.code is not None else message)
 
 
 class BaiduAPIError(CloudAdapterError):
@@ -67,6 +83,14 @@ class RemoteEntry:
     name: str
     path: str
     type: str
+    size: int | None = None
+    modified_at: int | None = None
+
+
+@dataclass
+class ShareResult:
+    share_url: str
+    passcode: str | None = None
 
 
 @dataclass
@@ -106,18 +130,48 @@ class QuarkOfficialAdapter:
     @staticmethod
     def _result(stdout: str, action: str) -> dict:
         result = None
+        failure = None
         for line in stdout.splitlines():
             try:
                 item = json.loads(line)
             except ValueError:
                 continue
+            if not isinstance(item, dict):
+                continue
             if item.get("type") == "result":
                 result = item
+            elif item.get("type") == "list" and item.get("code") not in {None, 0}:
+                failure = item
         if not isinstance(result, dict):
             raise CloudAdapterError(f"官方夸克 CLI {action} 未返回最终结果")
         if result.get("code") != 0:
-            message = str(result.get("msg") or f"官方夸克 CLI {action} 失败")
-            raise CloudAdapterError(QuarkOfficialAdapter._redact(message))
+            error = failure or result
+            data = error.get("data") or {}
+            message = str(error.get("msg") or result.get("msg") or f"官方夸克 CLI {action} 失败")
+            raise QuarkCLIError(QuarkOfficialAdapter._redact(message), code=str(error.get("code")),
+                                record_id=data.get("recordId"))
+        return result
+
+    @staticmethod
+    def _resume_result(stdout: str, task_id: str) -> dict:
+        result = QuarkOfficialAdapter._result(stdout, "文件续传")
+        completed = None
+        for line in stdout.splitlines():
+            try:
+                item = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(item, dict):
+                continue
+            data = item.get("data") or {}
+            if item.get("type") == "list" and data.get("recordId") == task_id:
+                if item.get("code") != 0:
+                    raise QuarkCLIError(QuarkOfficialAdapter._redact(str(item.get("msg") or "官方夸克 CLI 文件续传失败")),
+                                        code=str(item.get("code")), record_id=task_id)
+                completed = data
+        if not completed or not completed.get("fileId"):
+            raise CloudAdapterError("官方夸克 CLI 续传未确认文件上传成功")
+        result["data"] = {"successCount": 1, "failedCount": 0, "fids": [completed["fileId"]]}
         return result
 
     def _run(self, *args: str, timeout: int = 3600, progress_callback: Callable[[int], None] | None = None) -> str:
@@ -184,7 +238,13 @@ class QuarkOfficialAdapter:
         except OSError as exc:
             raise CloudAdapterError(f"无法启动官方夸克 CLI: {type(exc).__name__}") from exc
         if process.returncode != 0:
-            raise CloudAdapterError(self._redact((stderr or stdout or "官方夸克 CLI 执行失败")[-2000:]))
+            try:
+                self._result(stdout, "执行")
+            except QuarkCLIError:
+                raise
+            except CloudAdapterError:
+                pass
+            raise QuarkCLIError(self._redact((stderr or stdout or "官方夸克 CLI 执行失败")[-2000:]))
         return stdout
 
     def check_auth(self) -> AuthStatus:
@@ -213,10 +273,40 @@ class QuarkOfficialAdapter:
                     if not fid or not name:
                         continue
                     is_directory = str(item.get("file_type")) == "0"
-                    entries.append(RemoteEntry(str(fid), str(name), f"{remote_path.rstrip('/')}/{name}" or "/", "directory" if is_directory else "file"))
+                    size = item.get("size")
+                    modified_at = item.get("updated_at")
+                    entries.append(RemoteEntry(
+                        str(fid), str(name), f"{remote_path.rstrip('/')}/{name}" or "/",
+                        "directory" if is_directory else "file",
+                        size if isinstance(size, int) and size >= 0 and not is_directory else None,
+                        modified_at if isinstance(modified_at, int) and modified_at > 0 else None,
+                    ))
             except (OSError, ValueError, TypeError) as exc:
                 raise CloudAdapterError("无法解析官方夸克 CLI 目录清单") from exc
             return entries
+
+    def share(self, file_id: str, url_type: int = 2, expired_type: int = 1) -> ShareResult:
+        if not re.fullmatch(r"[A-Za-z0-9_~|][A-Za-z0-9_~|\-]{0,299}", file_id) or file_id == "0":
+            raise CloudAdapterError("请选择有效的文件或文件夹")
+        if url_type not in {1, 2} or expired_type not in range(1, 8):
+            raise CloudAdapterError("分享类型或有效期无效")
+        stdout = self._run("share", file_id, "--url-type", str(url_type),
+                           "--expired-type", str(expired_type), timeout=120)
+        data = self._result(stdout, "创建分享").get("data") or {}
+        share_url = data.get("share_url")
+        passcode = data.get("passcode")
+        if not isinstance(share_url, str):
+            raise CloudAdapterError("官方夸克 CLI 未返回分享链接")
+        try:
+            parsed = urllib.parse.urlsplit(share_url)
+        except ValueError as exc:
+            raise CloudAdapterError("官方夸克 CLI 返回了无效的分享链接") from exc
+        if (parsed.scheme != "https" or parsed.netloc != "pan.quark.cn"
+                or not parsed.path.startswith("/s/") or len(parsed.path) <= 3):
+            raise CloudAdapterError("官方夸克 CLI 返回了无效的分享链接")
+        if url_type == 2 and (not isinstance(passcode, str) or not passcode.strip()):
+            raise CloudAdapterError("分享已创建，但官方夸克 CLI 未返回提取码，请在夸克网盘中查看")
+        return ShareResult(share_url, passcode if url_type == 2 else None)
 
     def create_directory(self, parent_id: str, parent_path: str, name: str) -> RemoteEntry:
         result = self._result(self._run("create-folder", "--dir-path", name, "--parent-fid", parent_id), "创建目录")
@@ -227,8 +317,33 @@ class QuarkOfficialAdapter:
         return RemoteEntry(str(fid), name, str(data.get("full_path") or f"{parent_path.rstrip('/')}/{name}"), "directory")
 
     def upload_file(self, local_path: Path, remote_id: str, progress_callback: Callable[[int], None]) -> UploadResult:
-        output = self._run("upload", local_path.as_posix(), "--parent-fid", remote_id, progress_callback=progress_callback)
-        result = self._result(output, "文件上传")
+        try:
+            output = self._run("upload", local_path.as_posix(), "--parent-fid", remote_id,
+                               progress_callback=progress_callback)
+            result = self._result(output, "文件上传")
+        except CloudAdapterError as exc:
+            error = exc if isinstance(exc, QuarkCLIError) else QuarkCLIError(str(exc))
+            retry = self.config.retry
+            if not error.record_id or not error.retryable:
+                raise
+            task_id = error.record_id
+            for attempt in range(retry.max_attempts):
+                delay = min(retry.initial_delay_seconds * (2 ** attempt), retry.max_delay_seconds)
+                logger.warning("Quark upload task %s transient failure code=%s; resuming attempt %s/%s in %ss",
+                               task_id, error.code or "unavailable", attempt + 1, retry.max_attempts, delay)
+                time.sleep(delay)
+                try:
+                    output = self._run("upload", "resume", "--record-id", task_id,
+                                       progress_callback=progress_callback)
+                    result = self._resume_result(output, task_id)
+                except CloudAdapterError as resume_error:
+                    error = resume_error if isinstance(resume_error, QuarkCLIError) else QuarkCLIError(str(resume_error))
+                    if attempt + 1 == retry.max_attempts or not error.retryable:
+                        raise
+                    continue
+                break
+            else:
+                raise
         data = result.get("data") or {}
         if int(data.get("successCount", 0)) < 1 or int(data.get("failedCount", 0)):
             raise CloudAdapterError(str(result.get("msg") or "官方夸克 CLI 未确认文件上传成功"))

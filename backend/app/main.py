@@ -18,7 +18,7 @@ from fastapi.staticfiles import StaticFiles
 from sqlalchemy import delete, func, select
 from sqlalchemy.orm import Session as DbSession
 
-from .cloud import BaiduPanAdapter, CloudAdapterError, get_cloud_adapter
+from .cloud import BaiduPanAdapter, CloudAdapterError, QuarkOfficialAdapter, get_cloud_adapter
 from .config import Settings, load_settings
 from .database import AuditLog, BackupJob, BackupJobItem, BaiduOAuthState, Session, SessionLocal, User, get_db, init_db, utcnow
 from .paths import get_root, safe_name, safe_path, validate_relative_path
@@ -32,6 +32,7 @@ from .schemas import (
     MkdirRequest,
     MoveRequest,
     PathRequest,
+    QuarkShareRequest,
     RemoteDirectoryRequest,
     RenameRequest,
 )
@@ -396,11 +397,23 @@ def quark_status(request: Request, user: User = Depends(current_user)) -> dict[s
 
 
 @app.get("/api/v1/cloud/quark/directories")
-def quark_directories(request: Request, fid: str = "0", path: str = "/", user: User = Depends(current_user)) -> list[dict[str, str]]:
+def quark_directories(request: Request, fid: str = "0", path: str = "/", user: User = Depends(current_user)) -> list[dict[str, object]]:
     try:
         settings = settings_for(request)
         entries = get_cloud_adapter("quark", settings.quark, settings.baidu).list_directory(fid, path)
-        return [{"id": entry.id, "name": entry.name, "path": entry.path, "type": entry.type} for entry in entries]
+        return [{"id": entry.id, "name": entry.name, "path": entry.path, "type": entry.type,
+                 "size": entry.size, "modified_at": entry.modified_at} for entry in entries]
+    except CloudAdapterError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+@app.post("/api/v1/cloud/quark/shares")
+def quark_share(payload: QuarkShareRequest, request: Request, user: User = Depends(current_user)) -> dict[str, str | None]:
+    try:
+        result = QuarkOfficialAdapter(settings_for(request).quark).share(
+            payload.file_id, payload.url_type, payload.expired_type,
+        )
+        return {"share_url": result.share_url, "passcode": result.passcode}
     except CloudAdapterError as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
 

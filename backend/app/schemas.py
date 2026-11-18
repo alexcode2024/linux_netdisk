@@ -84,6 +84,19 @@ class RemoteDirectoryRequest(BaseModel):
         return value
 
 
+class QuarkShareRequest(BaseModel):
+    file_id: str = Field(min_length=1, max_length=300, pattern=r"^[A-Za-z0-9_~|][A-Za-z0-9_~|\-]*$")
+    url_type: Literal[1, 2] = 2
+    expired_type: Literal[1, 2, 3, 4, 5, 6, 7] = 1
+
+    @field_validator("file_id")
+    @classmethod
+    def validate_file_id(cls, value: str) -> str:
+        if value == "0":
+            raise ValueError("请选择要分享的文件或文件夹")
+        return value
+
+
 class JobItemResponse(BaseModel):
     id: int
     source_relative_path: str
